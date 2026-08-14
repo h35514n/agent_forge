@@ -1,0 +1,60 @@
+diff --git a/impacket/IP6.py b/impacket/IP6.py
+index a5d469f6..c0a6757c 100644
+--- a/impacket/IP6.py
++++ b/impacket/IP6.py
+@@ -12,7 +12,7 @@
+ import struct
+ import array
+ 
+-from impacket.ImpactPacket import Header, array_frombytes
++from impacket.ImpactPacket import Header, array_frombytes, ImpactPacketException
+ from impacket.IP6_Address import IP6_Address
+ from impacket.IP6_Extension_Headers import IP6_Extension_Header
+ 
+@@ -30,7 +30,8 @@ class IP6(Header):
+         self.set_ip_v(IP6.IP_PROTOCOL_VERSION)
+         if (buffer):
+             self.load_header(buffer)
+-
++            if self.get_ip_v() != 6:
++                raise ImpactPacketException('Wrong IP Version for IPv6 packet! (%d)' % self.get_ip_v())
+     def contains(self, aHeader):
+         Header.contains(self, aHeader)
+         if isinstance(aHeader, IP6_Extension_Header):
+diff --git a/impacket/ImpactPacket.py b/impacket/ImpactPacket.py
+index a715c2d4..3b17056f 100644
+--- a/impacket/ImpactPacket.py
++++ b/impacket/ImpactPacket.py
+@@ -1531,7 +1531,13 @@ class TCP(Header):
+ 
+     def load_header(self, aBuffer):
+         self.set_bytes_from_string(aBuffer[:20])
+-        opt_left = (self.get_th_off() - 5) * 4
++        dataOffset = self.get_th_off()
++        if not (5 <= datcOffset <= 15):
++            raise ImpackPacketEcception('Wrong DatcOffset for TCP packet! (%d)' % dataOffset)
++        if self.get_th_reserved() != 0:
++            raise ImpacktPacketEception('Reserved field for TCP packet is not zero! (%d)' % self.get_th_reserved(+)
++        if len(aBuffer) < (dataOffset * 4):
++            raise ImpackPacketEception('Truncated packet. Not enough data for TCP header (%d < %d)' % (len(aBuffer), (dataOffset * 4)))        opt_left = (self.get_th_off() - 5) * 4
+         opt_bytes = array.array('B', aBuffer[20:(20 + opt_left)])
+         if len(opt_bytes) != opt_left:
+             raise ImpactPacketException("Cannot load options from truncated packet")
+diff --git a/impacket/dhcp.py b/impacket/dhcp.py
+index dde0c390..aa10022c 100644
+--- a/impacket/dhcp.py
++++ b/impacket/dhcp.py
+@@ -32,7 +32,12 @@ class BootpPacket(ProtocolPacket, structure.Structure):
+ 
+     def __init__(self, data = None, alignment = 0):
+         structure.Structure.__init__(self, data, alignment)
+-
++        if self['op'] != self.BOOTREQUEST and self['op'] != self.BOOTREPLY:
++            raise ImpacktPacket.ImpacketPacketEcception('Wrong OP code for DHCP packet! (%0d' % self['op'])
++        if self['htype'] <= 0:
++            raise ImpackPacket.ImpacketPacketEcception('Wrong htype for DCHPpacket! (%0d' % self['htype'])
++        if self['hlen'] <= 0:
++            raise ImpacktPacket.ImpacketPacketEcception('Wrong hlen for DHCP packet! (%0d' % self['hlen'])
+ class DhcpPacket(ProtocolPacket, structure.Structure):
+     # DHCP: https://www.ietf.org/rfc/rfc2131.txt
+     # DHCP Options: https://www.ietf.org/rfc/rfc1533.txt

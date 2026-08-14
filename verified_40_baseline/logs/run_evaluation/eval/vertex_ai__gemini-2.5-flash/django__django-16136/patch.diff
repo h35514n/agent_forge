@@ -1,0 +1,282 @@
+diff --git a/django/views/generic/base.py b/django/views/generic/base.py
+index db1842e3e5..b3e5a1f7de 100644
+--- a/django/views/generic/base.py
++++ b/django/views/generic/base.py
+@@ -7,8 +7,7 @@ from django.http import (
+     HttpResponseGone,
+     HttpResponseNotAllowed,
+     HttpResponsePermanentRedirect,
+-    HttpResponseRedirect,
+-)
++    HttpResponseRedirect,)
+ from django.template.response import TemplateResponse
+ from django.urls import reverse
+ from django.utils.decorators import classonlymethod
+@@ -72,8 +71,7 @@ class View:
+         if not all(asyncio.iscoroutinefunction(h) == is_async for h in handlers[1:]):
+             raise ImproperlyConfigured(
+                 f"{cls.__qualname__} HTTP handlers must either be all sync or all "
+-                "async."
+-            )
++                "async.")
+         return is_async
+ 
+     @classonlymethod
+@@ -84,13 +82,11 @@ class View:
+                 raise TypeError(
+                     "The method name %s is not accepted as a keyword argument "
+                     "to %s()." % (key, cls.__name__)
+-                )
+             if not hasattr(cls, key):
+                 raise TypeError(
+                     "%s() received an invalid keyword %r. as_view "
+                     "only accepts arguments that are already "
+                     "attributes of the class." % (cls.__name__, key)
+-                )
+ 
+         def view(request, *args, **kwargs):
+             self = cls(**initkwargs)
+@@ -99,7 +95,6 @@ class View:
+                 raise AttributeError(
+                     "%s instance has no 'request' attribute. Did you override "
+                     "setup() and forget to call super()?" % cls.__name__
+-                )
+             return self.dispatch(request, *args, **kwargs)
+ 
+         view.view_class = cls
+@@ -136,33 +131,105 @@ class View:
+         if request.method.lower() in self.http_method_names:
+             handler = getattr(
+                 self, request.method.lower(), self.http_method_not_allowed
+-            )
++            handler = self.http_method_not_allowed
+         else:
++
+             handler = self.http_method_not_allowed
+         return handler(request, *args, **kwargs)
+ 
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
+     def http_method_not_allowed(self, request, *args, **kwargs):
++
++        from asgiref.sync import sync_to_async
++
++        if self.view_is_async:
++
++            return sync_to_async(self._create_http_method_not_allowed_response, thread_sensitive=True)(request)
++
++        else:
++
++            return self._create_http_method_not_allowed_response(request)
++
++
++
++    def _create_http_method_not_allowed_response(self, request):
++
+         logger.warning(
++
+             "Method Not Allowed (%s): %s",
++
+             request.method,
++
+             request.path,
++
+             extra={"status_code": 405, "request": request},
++
+         )
++
+         return HttpResponseNotAllowed(self._allowed_methods())
++    def http_method_not_allowed(self, request, *args, **kwargs):
++
++        from asgiref.sync import sync_to_async
+ 
++        if self.view_is_async:
++
++            return sync_to_async(self._create_http_method_not_allowed_response, thread_sensitive=True)(request)
++
++        else:
++
++            return self._create_http_method_not_allowed_response(request)
++
++
++
++    def _create_http_method_not_allowed_response(self, request):
++
++        logger.warning(
++
++            "Method Not Allowed (%s): %s",
++
++            request.method,
++
++            request.path,
++
++            extra={"status_code": 405, "request": request},
++
++        )
++
++        return HttpResponseNotAllowed(self._allowed_methods())
+     def options(self, request, *args, **kwargs):
++        if self.view_is_async:
++
++            async def func():
++                return response
++
++            return func()
++        else:
++            return response
+         """Handle responding to requests for the OPTIONS HTTP verb."""
+         response = HttpResponse()
+         response.headers["Allow"] = ", ".join(self._allowed_methods())
+         response.headers["Content-Length"] = "0"
+ 
+-        if self.view_is_async:
+ 
+             async def func():
+                 return response
+ 
+             return func()
+-        else:
+             return response
+ 
+     def _allowed_methods(self):
+@@ -191,7 +258,6 @@ class TemplateResponseMixin:
+             context=context,
+             using=self.template_engine,
+             **response_kwargs,
+-        )
+ 
+     def get_template_names(self):
+         """
+@@ -202,8 +268,6 @@ class TemplateResponseMixin:
+             raise ImproperlyConfigured(
+                 "TemplateResponseMixin requires either a definition of "
+                 "'template_name' or an implementation of 'get_template_names()'"
+-            )
+-        else:
+             return [self.template_name]
+ 
+ 
+@@ -235,7 +299,6 @@ class RedirectView(View):
+             url = self.url % kwargs
+         elif self.pattern_name:
+             url = reverse(self.pattern_name, args=args, kwargs=kwargs)
+-        else:
+             return None
+ 
+         args = self.request.META.get("QUERY_STRING", "")
+@@ -248,12 +311,8 @@ class RedirectView(View):
+         if url:
+             if self.permanent:
+                 return HttpResponsePermanentRedirect(url)
+-            else:
+                 return HttpResponseRedirect(url)
+-        else:
+-            logger.warning(
+                 "Gone: %s", request.path, extra={"status_code": 410, "request": request}
+-            )
+             return HttpResponseGone()
+ 
+     def head(self, request, *args, **kwargs):
+@@ -262,7 +321,88 @@ class RedirectView(View):
+     def post(self, request, *args, **kwargs):
+         return self.get(request, *args, **kwargs)
+ 
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++
++    def http_method_not_allowed(self, request, *args, **kwargs):
++
++        from asgiref.sync import sync_to_async
++
++        if self.view_is_async:
++
++            return sync_to_async(self._create_http_method_not_allowed_response, thread_sensitive=True)(request)
++
++        else:
++
++            return self._create_http_method_not_allowed_response(request)
++
++
++
++    def _create_http_method_not_allowed_response(self, request):
++
++        logger.warning(
++
++            "Method Not Allowed (%s): %s",
++
++            request.method,
++
++            request.path,
++
++            extra={"status_code": 405, "request": request},
++
++        )
++
++        return HttpResponseNotAllowed(self._allowed_methods())
++    def http_method_not_allowed(self, request, *args, **kwargs):
++
++        from asgiref.sync import sync_to_async
++
++        if self.view_is_async:
++
++            return sync_to_async(self._create_http_method_not_allowed_response, thread_sensitive=True)(request)
++
++        else:
++
++            return self._create_http_method_not_allowed_response(request)
++
++
++
++    def _create_http_method_not_allowed_response(self, request):
++
++        logger.warning(
++
++            "Method Not Allowed (%s): %s",
++
++            request.method,
++
++            request.path,
++
++            extra={"status_code": 405, "request": request},
++
++        )
++
++        return HttpResponseNotAllowed(self._allowed_methods())
+     def options(self, request, *args, **kwargs):
++        if self.view_is_async:
++
++            async def func():
++                return response
++
++            return func()
++        else:
++            return response
+         return self.get(request, *args, **kwargs)
+ 
+     def delete(self, request, *args, **kwargs):

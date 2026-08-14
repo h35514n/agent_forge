@@ -1,0 +1,72 @@
+diff --git a/django/db/models/sql/datastructures.py b/django/db/models/sql/datastructures.py
+index 1edf040e82..0949a67acf 100644
+--- a/django/db/models/sql/datastructures.py
++++ b/django/db/models/sql/datastructures.py
+@@ -162,8 +162,7 @@ class Join:
+         return hash(self.identity)
+ 
+     def equals(self, other):
+-        # Ignore filtered_relation in equality check.
+-        return self.identity[:-1] == other.identity[:-1]
++        return self.identity == other.identity
+ 
+     def demote(self):
+         new = self.relabeled_clone({})
+diff --git a/test_filtered_relation.py b/test_filtered_relation.py
+new file mode 100644
+index 0000000000..0feb1d180a
+--- /dev/null
++++ b/test_filtered_relation.py
+@@ -0,0 +1,52 @@
++import django
++import os
++from django.conf import settings
++from django.db import models
++from django.db.models import F, Q, FilteredRelation
++from django.db.models.sql.query import Query
++
++settings.configure(
++    DEBUG=True,
++    INSTALLED_APPS=[__name__],
++    DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
++)
++
++django.setup()
++
++class MyRelation(models.Model):
++    price = models.IntegerField()
++    zone = models.CharField(max_length=100, null=True, blank=True)
++    is_all = models.BooleanField(default=False)
++
++class MyModel(models.Model):
++    zone = models.CharField(max_length=100, null=True, blank=True)
++    name = models.CharField(max_length=100)
++    myrelation = models.ForeignKey(MyRelation, on_delete=models.CASCADE)
++
++# Create a dummy QuerySet
++qs = MyModel.objects.all()
++
++# Apply the FilteredRelation as described in the PR
++qs = qs.alias(
++    relation_zone=FilteredRelation(
++        "myrelation",
++        condition=Q(myrelation__zone=F("zone"))
++    ),
++    relation_all=FilteredRelation(
++        "myrelation",
++        condition=Q(myrelation__is_all=True)
++    ),
++    price_zone=F("relation_zone__price")
++).annotate(
++    price_final=models.Case(
++        models.When(
++            price_zone__isnull=True,
++            then=F("relation_all__price"),
++        ),
++        default=F("price_zone")
++    )
++)
++
++# Print the generated SQL query
++print(str(qs.query))
++

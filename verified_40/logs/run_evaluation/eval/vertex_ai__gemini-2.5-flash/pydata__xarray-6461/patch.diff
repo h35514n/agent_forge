@@ -1,0 +1,59 @@
+diff --git a/reproduce_bug.py b/reproduce_bug.py
+new file mode 100644
+index 00000000..493fe5c6
+--- /dev/null
++++ b/reproduce_bug.py
+@@ -0,0 +1,24 @@
++import xarray as xr
++import numpy as np
++
++try:
++    # This should now work without IndexError
++    result = xr.where(xr.DataArray([1, 2, 3]) > 0, 1, 0, keep_attrs=True)
++    print("Test passed: xr.where with scalar as second argument and keep_attrs=True did not raise IndexError.")
++    print(result)
++except IndexError as e:
++    print(f"Test failed: IndexError was raised: {e}")
++except Exception as e:
++    print(f"Test failed: An unexpected error occurred: {e}")
++
++# Also test with DataArray as second argument to ensure existing functionality is not broken
++try:
++    da = xr.DataArray([10, 20, 30], attrs={"units": "meters"})
++    result_da = xr.where(xr.DataArray([1, 2, 3]) > 0, da, 0, keep_attrs=True)
++    print("Test passed: xr.where with DataArray as second argument and keep_attrs=True worked correctly.")
++    print(result_da)
++    assert "units" in result_da.attrs
++    print("Attributes were kept correctly for DataArray.")
++except Exception as e:
++    print(f"Test failed: An unexpected error occurred with DataArray as second argument: {e}")
++
+diff --git a/xarray/core/computation.py b/xarray/core/computation.py
+index 7676d8e5..013d2161 100644
+--- a/xarray/core/computation.py
++++ b/xarray/core/computation.py
+@@ -30,11 +30,10 @@ from .pycompat import is_duck_dask_array
+ from .utils import is_dict_like
+ from .variable import Variable
+ 
+-if TYPE_CHECKING:
+-    from .coordinates import Coordinates
+-    from .dataarray import DataArray
+-    from .dataset import Dataset
+-    from .types import T_Xarray
++
++
++from .coordinates import Coordinates
++from .types import T_Xarray
+ 
+ _NO_FILL_VALUE = utils.ReprObject("<no-fill-value>")
+ _DEFAULT_NAME = utils.ReprObject("<default-name>")
+@@ -1829,7 +1828,7 @@ def where(cond, x, y, keep_attrs=None):
+     if keep_attrs is True:
+         # keep the attributes of x, the second parameter, by default to
+         # be consistent with the `where` method of `DataArray` and `Dataset`
+-        keep_attrs = lambda attrs, context: attrs[1]
++        keep_attrs = lambda attrs, context: {} if attrs is None or len(attrs) < 2 else attrs[1]
+ 
+     # alignment for three arguments is complicated, so don't support it yet
+     return apply_ufunc(

@@ -1,0 +1,152 @@
+diff --git a/django/db/models/base.py b/django/db/models/base.py
+index 55b1691166..1ab592f6e9 100644
+--- a/django/db/models/base.py
++++ b/django/db/models/base.py
+@@ -872,7 +872,7 @@ class Model(metaclass=ModelBase):
+             results = self._do_insert(cls._base_manager, using, fields, returning_fields, raw)
+             if results:
+                 for value, field in zip(results[0], returning_fields):
+-                    setattr(self, field.attname, value)
++                                        setattr(self, field.attname, field.from_db_value(value, None, connections[using]))
+         return updated
+ 
+     def _do_update(self, base_qs, using, pk_val, values, update_fields, forced_update):
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 387deca527..5c185c94ce 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -505,12 +505,13 @@ class QuerySet:
+                 for obj_with_pk, results in zip(objs_with_pk, returned_columns):
+                     for result, field in zip(results, opts.db_returning_fields):
+                         if field != opts.pk:
+-                            setattr(obj_with_pk, field.attname, result)
++                                                        setattr(obj_with_pk, field.attname, field.from_db_value(result, None, connection))
+                 for obj_with_pk in objs_with_pk:
+                     obj_with_pk._state.adding = False
+                     obj_with_pk._state.db = self.db
+             if objs_without_pk:
+-                fields = [f for f in fields if not isinstance(f, AutoField)]
++                if not connection.features.can_return_rows_from_bulk_insert or ignore_conflicts:
++                    fields = [f for f in fields if not isinstance(f, AutoField)]
+                 returned_columns = self._batched_insert(
+                     objs_without_pk, fields, batch_size, ignore_conflicts=ignore_conflicts,
+                 )
+@@ -518,7 +519,7 @@ class QuerySet:
+                     assert len(returned_columns) == len(objs_without_pk)
+                 for obj_without_pk, results in zip(objs_without_pk, returned_columns):
+                     for result, field in zip(results, opts.db_returning_fields):
+-                        setattr(obj_without_pk, field.attname, result)
++                                                setattr(obj_without_pk, field.attname, field.from_db_value(result, None, connection))
+                     obj_without_pk._state.adding = False
+                     obj_without_pk._state.db = self.db
+ 
+diff --git a/run_test.py b/run_test.py
+new file mode 100644
+index 0000000000..6048b091bc
+--- /dev/null
++++ b/run_test.py
+@@ -0,0 +1,46 @@
++import os
++import django
++from django.conf import settings
++from django.apps import apps
++from django.db import connection
++
++# Setup Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
++django.setup()
++
++from test_app.models import AutoModel, MyIntWrapper
++
++def run_test():
++    print("Running test...")
++
++    # Create tables
++    with connection.schema_editor() as schema_editor:
++        schema_editor.create_model(AutoModel)
++
++    # Test case 1: Single object creation
++    print("\n--- Testing single object creation (AutoModel.objects.create()) ---")
++    am2 = AutoModel.objects.create()
++    print(f"am2.id: {am2.id}")
++    assert isinstance(am2.id, MyIntWrapper), f"Expected MyIntWrapper, got {type(am2.id)}"
++    print("Single object creation: PASSED")
++
++    # Test case 2: bulk_create
++    print("\n--- Testing bulk_create ---")
++    ams = [AutoModel(), AutoModel()]
++    AutoModel.objects.bulk_create(ams)
++    for i, am_obj in enumerate(ams):
++        print(f"ams[{i}].id: {am_obj.id}")
++        assert isinstance(am_obj.id, MyIntWrapper), f"Expected MyIntWrapper, got {type(am_obj.id)}"
++    print("bulk_create: PASSED")
++
++    # Test case 3: Querying existing objects (should already work)
++    print("\n--- Testing querying existing objects ---")
++    am = AutoModel.objects.first()
++    print(f"am.id (from query): {am.id}")
++    assert isinstance(am.id, MyIntWrapper), f"Expected MyIntWrapper, got {type(am.id)}"
++    print("Querying existing objects: PASSED")
++
++    print("\nAll tests passed!")
++
++if __name__ == '__main__':
++    run_test()
+diff --git a/settings.py b/settings.py
+new file mode 100644
+index 0000000000..a0866218a0
+--- /dev/null
++++ b/settings.py
+@@ -0,0 +1,11 @@
++SECRET_KEY = 'dummy-secret-key'
++DEBUG = True
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++INSTALLED_APPS = [
++    'test_app',
++]
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..3867b25045
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,35 @@
++from django.db import models
++
++class MyIntWrapper:
++    def __init__(self, value):
++        self.value = value
++
++    def __repr__(self):
++        return f"<MyIntWrapper: {self.value}>"
++
++    def __eq__(self, other):
++        if isinstance(other, MyIntWrapper):
++            return self.value == other.value
++        return self.value == other
++
++    def __int__(self):
++        return self.value
++
++class MyAutoField(models.BigAutoField):
++    def from_db_value(self, value, expression, connection):
++        if value is None:
++            return None
++        return MyIntWrapper(value)
++
++    def get_prep_value(self, value):
++        if value is None:
++            return None
++        if isinstance(value, MyIntWrapper):
++            return value.value
++        return int(value)
++
++class AutoModel(models.Model):
++    id = MyAutoField(primary_key=True)
++
++    class Meta:
++        app_label = 'test_app'

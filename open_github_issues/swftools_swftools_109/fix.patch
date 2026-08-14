@@ -1,0 +1,16 @@
+diff --git a/lib/rfxswf.c b/lib/rfxswf.c
+index 41988db0..ba3ff5e2 100644
+--- a/lib/rfxswf.c
++++ b/lib/rfxswf.c
+@@ -202,9 +202,11 @@ int swf_SetU32(TAG * t,U32 v)
+ U32 swf_GetBits(TAG * t,int nbits)
+ { U32 res = 0;
+   if (!nbits) return 0;
++  if (!t || !t->data) return 0;
+   if (!t->readBit) t->readBit = 0x80;
+   while (nbits)
+   { res<<=1;
++    if (t->pos>=t->len) return res;
+ #ifdef DEBUG_RFXSWF
+     if (t->pos>=t->len) 
+     { fprintf(stderr,"GetBits() out of bounds: TagID = %i, pos=%d, len=%d\n",t->id, t->pos, t->len);

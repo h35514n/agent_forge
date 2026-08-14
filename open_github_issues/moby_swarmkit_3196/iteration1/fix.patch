@@ -1,0 +1,13 @@
+diff --git a/manager/state/raft/transport/peer.go b/manager/state/raft/transport/peer.go
+index 7b5efe15..19060e97 100644
+--- a/manager/state/raft/transport/peer.go
++++ b/manager/state/raft/transport/peer.go
+@@ -439,5 +439,8 @@ func (p *peer) run(ctx context.Context) {
+ 
+ func (p *peer) stop() {
+ 	p.cancel()
++	p.mu.Lock()
++	p.cc.Close()
++	p.mu.Unlock()
+ 	<-p.done
+ }

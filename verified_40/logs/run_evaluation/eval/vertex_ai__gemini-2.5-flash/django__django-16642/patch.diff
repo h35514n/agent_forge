@@ -1,0 +1,50 @@
+diff --git a/django/http/response.py b/django/http/response.py
+index f62dec8ce9..b265f422fb 100644
+--- a/django/http/response.py
++++ b/django/http/response.py
+@@ -612,7 +612,8 @@ class FileResponse(StreamingHttpResponse):
+                     "bzip2": "application/x-bzip",
+                     "gzip": "application/gzip",
+                     "xz": "application/x-xz",
+-                }.get(encoding, content_type)
++                    "compress": "application/x-compress",
++                    "br": "application/x-brotli",                }.get(encoding, content_type)
+                 self.headers["Content-Type"] = (
+                     content_type or "application/octet-stream"
+                 )
+diff --git a/test_fileresponse.py b/test_fileresponse.py
+new file mode 100644
+index 0000000000..447592231a
+--- /dev/null
++++ b/test_fileresponse.py
+@@ -0,0 +1,30 @@
++import os
++import mimetypes
++from django.http import FileResponse
++from django.conf import settings
++
++# Configure Django settings minimally for FileResponse to work
++if not settings.configured:
++    settings.configure()
++
++# Create dummy files
++with open('test.html.Z', 'w') as f:
++    f.write('<html><body><h1>Hello Z!</h1></body></html>')
++with open('test.html.br', 'w') as f:
++    f.write('<html><body><h1>Hello BR!</h1></body></html>')
++
++# Test .Z file
++print("Testing test.html.Z:")
++with open('test.html.Z', 'rb') as f:
++    response = FileResponse(f)
++    print(f"Content-Type for .Z: {response['Content-Type']}")
++
++# Test .br file
++print("\nTesting test.html.br:")
++with open('test.html.br', 'rb') as f:
++    response = FileResponse(f)
++    print(f"Content-Type for .br: {response['Content-Type']}")
++
++# Clean up dummy files
++os.remove('test.html.Z')
++os.remove('test.html.br')

@@ -1,0 +1,81 @@
+diff --git a/impacket/IP6.py b/impacket/IP6.py
+index a5d469f6..c0a6757c 100644
+--- a/impacket/IP6.py
++++ b/impacket/IP6.py
+@@ -12,7 +12,7 @@
+ import struct
+ import array
+ 
+-from impacket.ImpactPacket import Header, array_frombytes
++from impacket.ImpactPacket import Header, array_frombytes, ImpactPacketException
+ from impacket.IP6_Address import IP6_Address
+ from impacket.IP6_Extension_Headers import IP6_Extension_Header
+ 
+@@ -30,7 +30,8 @@ class IP6(Header):
+         self.set_ip_v(IP6.IP_PROTOCOL_VERSION)
+         if (buffer):
+             self.load_header(buffer)
+-
++            if self.get_ip_v() != 6:
++                raise ImpactPacketException('Wrong IP Version for IPv6 packet! (%d)' % self.get_ip_v())
+     def contains(self, aHeader):
+         Header.contains(self, aHeader)
+         if isinstance(aHeader, IP6_Extension_Header):
+diff --git a/impacket/ImpactPacket.py b/impacket/ImpactPacket.py
+index a715c2d4..4e931ff9 100644
+--- a/impacket/ImpactPacket.py
++++ b/impacket/ImpactPacket.py
+@@ -1530,7 +1530,26 @@ class TCP(Header):
+             return array_tobytes(bytes)
+ 
+     def load_header(self, aBuffer):
++        # Check for truncated packet (minimum header size)
++        if len(aBuffer) < 20:
++            raise ImpactPacketException("TCP packet header is too short (%d bytes)" % len(aBuffer))
+         self.set_bytes_from_string(aBuffer[:20])
++
++        data_offset = self.get_th_off()
++        reserved_field = self.get_th_reserved()
++
++        # DataOffset validation
++         if not (5 <= data_offset <= 15):
++            raise ImpactPacketException("Invalid DataOffset for TCP packet! (%d)" % data_offset)
++
++        # Reserved field validation
++        if reserved_field != 0:
++            raise ImpactPacketException("Reserved field in TCP header is not zero! (%d)" % reserved_field)
++
++        # Check for truncated packet (total header size)
++        expected_header_len = data_offset * 4
++        if len(aBuffer) < expected_header_len:
++            raise ImpactPacketException("TCP packet header is truncated. Expected %d bytes, got %d." % (expected_header_len, len(aBuffer)))
+         opt_left = (self.get_th_off() - 5) * 4
+         opt_bytes = array.array('B', aBuffer[20:(20 + opt_left)])
+         if len(opt_bytes) != opt_left:
+diff --git a/impacket/dhcp.py b/impacket/dhcp.py
+index dde0c390..6b0c4163 100644
+--- a/impacket/dhcp.py
++++ b/impacket/dhcp.py
+@@ -10,7 +10,7 @@
+ #
+ 
+ from impacket import structure
+-from impacket.ImpactPacket import ProtocolPacket
++from impacket.ImpactPacket import ImpactPacketException
+ 
+ class BootpPacket(ProtocolPacket, structure.Structure):
+     commonHdr = (
+@@ -32,7 +32,12 @@ class BootpPacket(ProtocolPacket, structure.Structure):
+ 
+     def __init__(self, data = None, alignment = 0):
+         structure.Structure.__init__(self, data, alignment)
+-
++        if self['op'] not in (self.BOOTREQUEST, self.BOOTREPLY):
++            raise ImpactPacketException('Wrong OP field for DHCP packet! (%d)' % self['op'])
++        if self['htype'] <= 0:
++            raise ImpactPacketException('Wrong htype field for DHCP packet! (%d)' % self['htype'])
++        if self['hlen'] != len(self['chaddr']):
++            raise ImpactPacketException('Wrong hlen field for DHCP packet! (%d) vs actual chaddr length (%d)' % (self['hlen'], len(self['chaddr'])))
+ class DhcpPacket(ProtocolPacket, structure.Structure):
+     # DHCP: https://www.ietf.org/rfc/rfc2131.txt
+     # DHCP Options: https://www.ietf.org/rfc/rfc1533.txt

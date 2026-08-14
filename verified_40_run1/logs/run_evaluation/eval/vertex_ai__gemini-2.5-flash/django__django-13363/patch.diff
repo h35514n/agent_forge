@@ -1,0 +1,192 @@
+diff --git a/django/db/models/functions/datetime.py b/django/db/models/functions/datetime.py
+index b6594b043b..6828980733 100644
+--- a/django/db/models/functions/datetime.py
++++ b/django/db/models/functions/datetime.py
+@@ -292,7 +292,7 @@ class TruncDate(TruncBase):
+     def as_sql(self, compiler, connection):
+         # Cast to date rather than truncate to date.
+         lhs, lhs_params = compiler.compile(self.lhs)
+-        tzname = timezone.get_current_timezone_name() if settings.USE_TZ else None
++        tzname = self.get_tzname()
+         sql = connection.ops.datetime_cast_date_sql(lhs, tzname)
+         return sql, lhs_params
+ 
+@@ -305,7 +305,7 @@ class TruncTime(TruncBase):
+     def as_sql(self, compiler, connection):
+         # Cast to time rather than truncate to time.
+         lhs, lhs_params = compiler.compile(self.lhs)
+-        tzname = timezone.get_current_timezone_name() if settings.USE_TZ else None
++        tzname = self.get_tzname()
+         sql = connection.ops.datetime_cast_time_sql(lhs, tzname)
+         return sql, lhs_params
+ 
+diff --git a/tests/datetimes/models.py b/tests/datetimes/models.py
+index c8b64ae52a..6c733576ff 100644
+--- a/tests/datetimes/models.py
++++ b/tests/datetimes/models.py
+@@ -24,3 +24,9 @@ class Comment(models.Model):
+ 
+ class Category(models.Model):
+     name = models.CharField(max_length=255)
++
++class TimeSlots(models.Model):
++    start_at = models.DateTimeField()
++
++    class Meta:
++        app_label = 'datetimes'
+diff --git a/tests/datetimes/test_trunc_tzinfo.py b/tests/datetimes/test_trunc_tzinfo.py
+new file mode 100644
+index 0000000000..578ec1c5dd
+--- /dev/null
++++ b/tests/datetimes/test_trunc_tzinfo.py
+@@ -0,0 +1,150 @@
++import datetime
++import pytz
++
++from django.db import models
++from django.db.models import Count
++from django.db.models.functions import TruncDate, TruncTime
++from django.test import TestCase, override_settings
++from django.utils import timezone
++
++from .models import TimeSlots
++from .models import TimeSlots
++@override_settings(USE_TZ=True, TIME_ZONE='UTC')
++class TruncDateTruncTimeTzinfoTests(TestCase):
++    @classmethod
++    def setUpTestData(cls):
++        # Create some data with different timezones
++        utc = pytz.UTC
++        new_york_tz = pytz.timezone("America/New_York")
++        london_tz = pytz.timezone("Europe/London")
++
++        # UTC times
++        TimeSlots.objects.create(start_at=utc.localize(datetime.datetime(2023, 1, 1, 10, 0, 0)))
++        TimeSlots.objects.create(start_at=utc.localize(datetime.datetime(2023, 1, 1, 11, 0, 0)))
++        TimeSlots.objects.create(start_at=utc.localize(datetime.datetime(2023, 1, 2, 9, 0, 0)))
++
++        # New York times (UTC-5, UTC-4 DST)
++        # 2023-01-01 05:00:00 NYT is 2023-01-01 10:00:00 UTC
++        TimeSlots.objects.create(start_at=new_york_tz.localize(datetime.datetime(2023, 1, 1, 5, 0, 0)))
++        # 2023-01-01 06:00:00 NYT is 2023-01-01 11:00:00 UTC
++        TimeSlots.objects.create(start_at=new_york_tz.localize(datetime.datetime(2023, 1, 1, 6, 0, 0)))
++        # 2023-07-01 10:00:00 NYT is 2023-07-01 14:00:00 UTC (DST)
++        TimeSlots.objects.create(start_at=new_york_tz.localize(datetime.datetime(2023, 7, 1, 10, 0, 0)))
++
++        # London times (UTC+0, UTC+1 DST)
++        # 2023-01-01 10:00:00 GMT is 2023-01-01 10:00:00 UTC
++        TimeSlots.objects.create(start_at=london_tz.localize(datetime.datetime(2023, 1, 1, 10, 0, 0)))
++        # 2023-07-01 10:00:00 BST is 2023-07-01 09:00:00 UTC (DST)
++        TimeSlots.objects.create(start_at=london_tz.localize(datetime.datetime(2023, 7, 1, 10, 0, 0)))
++
++    def test_trunc_date_with_tzinfo(self):
++        ny_tz = pytz.timezone("America/New_York")
++        london_tz = pytz.timezone("Europe/London")
++
++        # Test with America/New_York timezone
++        report_ny = (
++            TimeSlots.objects.annotate(start_date=TruncDate("start_at", tzinfo=ny_tz))
++            .values("start_date")
++            .annotate(timeslot_count=Count("id"))
++            .order_by("start_date")
++        )
++        # Expected:
++        # 2023-01-01 (NYT): 2 UTC (10:00, 11:00) + 2 NYT (05:00, 06:00) = 4
++        # 2023-01-02 (NYT): 1 UTC (09:00) = 1
++        # 2023-07-01 (NYT): 1 NYT (10:00) = 1
++        # 2023-06-30 (NYT): 1 London (09:00 UTC which is 05:00 NYT on 2023-07-01, but 10:00 BST on 2023-07-01)
++        # Let's re-evaluate the London time: 2023-07-01 10:00:00 BST is 2023-07-01 09:00:00 UTC.
++        # In NYT (UTC-4 DST), 2023-07-01 09:00:00 UTC is 2023-07-01 05:00:00 NYT. So it falls on 2023-07-01 NYT.
++        # In NYT (UTC-5 non-DST), 2023-01-01 10:00:00 UTC is 2023-01-01 05:00:00 NYT.
++        # In NYT (UTC-5 non-DST), 2023-01-01 11:00:00 UTC is 2023-01-01 06:00:00 NYT.
++        # In NYT (UTC-5 non-DST), 2023-01-02 09:00:00 UTC is 2023-01-02 04:00:00 NYT.
++        # In London (UTC+0 non-DST), 2023-01-01 10:00:00 UTC is 2023-01-01 10:00:00 GMT.
++        # So, for NYT:
++        # 2023-01-01: 10:00 UTC (05:00 NYT), 11:00 UTC (06:00 NYT), 05:00 NYT (10:00 UTC), 06:00 NYT (11:00 UTC), 10:00 GMT (05:00 NYT) -> 5 entries
++        # 2023-01-02: 09:00 UTC (04:00 NYT) -> 1 entry
++        # 2023-07-01: 10:00 NYT (14:00 UTC), 10:00 BST (05:00 NYT) -> 2 entries
++
++        self.assertListEqual(
++            list(report_ny),
++            [
++                {'start_date': datetime.date(2023, 1, 1), 'timeslot_count': 5},
++                {'start_date': datetime.date(2023, 1, 2), 'timeslot_count': 1},
++                {'start_date': datetime.date(2023, 7, 1), 'timeslot_count': 2},
++            ]
++        )
++
++        # Test with Europe/London timezone
++        report_london = (
++            TimeSlots.objects.annotate(start_date=TruncDate("start_at", tzinfo=london_tz))
++            .values("start_date")
++            .annotate(timeslot_count=Count("id"))
++            .order_by("start_date")
++        )
++        # For London (UTC+0 non-DST, UTC+1 DST):
++        # 2023-01-01: 10:00 UTC (10:00 GMT), 11:00 UTC (11:00 GMT), 05:00 NYT (10:00 UTC -> 10:00 GMT), 06:00 NYT (11:00 UTC -> 11:00 GMT), 10:00 GMT (10:00 GMT) -> 5 entries
++        # 2023-01-02: 09:00 UTC (09:00 GMT) -> 1 entry
++        # 2023-07-01: 10:00 NYT (14:00 UTC -> 15:00 BST), 10:00 BST (09:00 UTC -> 10:00 BST) -> 2 entries
++        self.assertListEqual(
++            list(report_london),
++            [
++                {'start_date': datetime.date(2023, 1, 1), 'timeslot_count': 5},
++                {'start_date': datetime.date(2023, 1, 2), 'timeslot_count': 1},
++                {'start_date': datetime.date(2023, 7, 1), 'timeslot_count': 2},
++            ]
++        )
++
++    def test_trunc_time_with_tzinfo(self):
++        ny_tz = pytz.timezone("America/New_York")
++        london_tz = pytz.timezone("Europe/London")
++
++        # Test with America/New_York timezone
++        report_ny = (
++            TimeSlots.objects.annotate(start_time=TruncTime("start_at", tzinfo=ny_tz))
++            .values("start_time")
++            .annotate(timeslot_count=Count("id"))
++            .order_by("start_time")
++        )
++        # Expected times in NYT:
++        # 10:00 UTC -> 05:00 NYT (winter)
++        # 11:00 UTC -> 06:00 NYT (winter)
++        # 09:00 UTC -> 04:00 NYT (winter)
++        # 05:00 NYT -> 05:00 NYT (winter)
++        # 06:00 NYT -> 06:00 NYT (winter)
++        # 10:00 NYT -> 10:00 NYT (summer)
++        # 10:00 GMT -> 05:00 NYT (winter)
++        # 10:00 BST (09:00 UTC) -> 05:00 NYT (summer)
++        self.assertListEqual(
++            list(report_ny),
++            [
++                {'start_time': ny_tz.localize(datetime.datetime(2000, 1, 1, 4, 0, 0)).time(), 'timeslot_count': 1},
++                {'start_time': ny_tz.localize(datetime.datetime(2000, 1, 1, 5, 0, 0)).time(), 'timeslot_count': 4},
++                {'start_time': ny_tz.localize(datetime.datetime(2000, 1, 1, 6, 0, 0)).time(), 'timeslot_count': 2},
++                {'start_time': ny_tz.localize(datetime.datetime(2000, 1, 1, 10, 0, 0)).time(), 'timeslot_count': 1},
++            ]
++        )
++
++        # Test with Europe/London timezone
++        report_london = (
++            TimeSlots.objects.annotate(start_time=TruncTime("start_at", tzinfo=london_tz))
++            .values("start_time")
++            .annotate(timeslot_count=Count("id"))
++            .order_by("start_time")
++        )
++        # Expected times in London:
++        # 10:00 UTC -> 10:00 GMT (winter)
++        # 11:00 UTC -> 11:00 GMT (winter)
++        # 09:00 UTC -> 09:00 GMT (winter)
++        # 05:00 NYT (10:00 UTC) -> 10:00 GMT (winter)
++        # 06:00 NYT (11:00 UTC) -> 11:00 GMT (winter)
++        # 10:00 NYT (14:00 UTC) -> 15:00 BST (summer)
++        # 10:00 GMT -> 10:00 GMT (winter)
++        # 10:00 BST (09:00 UTC) -> 10:00 BST (summer)
++        self.assertListEqual(
++            list(report_london),
++            [
++                {'start_time': london_tz.localize(datetime.datetime(2000, 1, 1, 9, 0, 0)).time(), 'timeslot_count': 1},
++                {'start_time': london_tz.localize(datetime.datetime(2000, 1, 1, 10, 0, 0)).time(), 'timeslot_count': 4},
++                {'start_time': london_tz.localize(datetime.datetime(2000, 1, 1, 11, 0, 0)).time(), 'timeslot_count': 2},
++                {'start_time': london_tz.localize(datetime.datetime(2000, 1, 1, 15, 0, 0)).time(), 'timeslot_count': 1},
++            ]
++        )

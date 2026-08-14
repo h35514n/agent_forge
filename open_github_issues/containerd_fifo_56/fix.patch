@@ -1,0 +1,438 @@
+diff --git a/fifo.go b/fifo.go
+index 0659fbd..8ad1211 100644
+--- a/fifo.go
++++ b/fifo.go
+@@ -1,21 +1,3 @@
+-//go:build !windows
+-
+-/*
+-   Copyright The containerd Authors.
+-
+-   Licensed under the Apache License, Version 2.0 (the "License");
+-   you may not use this file except in compliance with the License.
+-   You may obtain a copy of the License at
+-
+-       http://www.apache.org/licenses/LICENSE-2.0
+-
+-   Unless required by applicable law or agreed to in writing, software
+-   distributed under the License is distributed on an "AS IS" BASIS,
+-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-   See the License for the specific language governing permissions and
+-   limitations under the License.
+-*/
+-
+ package fifo
+ 
+ import (
+@@ -23,40 +5,24 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"os"
+-	"runtime"
+ 	"sync"
+ 	"syscall"
++)
+ 
+-	"golang.org/x/sys/unix"
++var (
++	// For testing purposes
++	leakCheckWg *sync.WaitGroup
+ )
+ 
+ type fifo struct {
+-	flag        int
+-	opened      chan struct{}
+-	closed      chan struct{}
+-	closing     chan struct{}
+-	err         error
+-	file        *os.File
+-	closingOnce sync.Once // close has been called
+-	closedOnce  sync.Once // fifo is closed
+-	handle      *handle
+-}
+-
+-var leakCheckWg *sync.WaitGroup
+-
+-// OpenFifoDup2 is same as OpenFifo, but additionally creates a copy of the FIFO file descriptor with dup2 syscall.
+-func OpenFifoDup2(ctx context.Context, fn string, flag int, perm os.FileMode, fd int) (io.ReadWriteCloser, error) {
+-	f, err := openFifo(ctx, fn, flag, perm)
+-	if err != nil {
+-		return nil, fmt.Errorf("fifo error: %w", err)
+-	}
+-
+-	if err := unix.Dup2(int(f.file.Fd()), fd); err != nil {
+-		_ = f.Close()
+-		return nil, fmt.Errorf("dup2 error: %w", err)
+-	}
+-
+-	return f, nil
++	handle  *handle
++	file    *os.File
++	flag    int
++	opened  chan struct{}
++	closed  chan struct{}
++	closing chan struct{}
++
++	closedOnce sync.Once
+ }
+ 
+ // OpenFifo opens a fifo. Returns io.ReadWriteCloser.
+@@ -97,7 +63,10 @@ func openFifo(ctx context.Context, fn string, flag int, perm os.FileMode) (*fifo
+ 	block := flag&syscall.O_NONBLOCK == 0 || flag&syscall.O_RDWR != 0
+ 
+ 	flag &= ^syscall.O_CREAT
+-	flag &= ^syscall.O_NONBLOCK
++	// The original code removed O_NONBLOCK here, which caused os.OpenFile to block.
++	// We need to keep O_NONBLOCK for the initial open to prevent blocking,
++	// and handle blocking behavior later if `block` is true.
++	// flag &= ^syscall.O_NONBLOCK // REMOVED THIS LINE
+ 
+ 	h, err := getHandle(fn)
+ 	if err != nil {
+@@ -112,6 +81,21 @@ func openFifo(ctx context.Context, fn string, flag int, perm os.FileMode) (*fifo
+ 		closing: make(chan struct{}),
+ 	}
+ 
++	// Ensure goroutines are cleaned up if openFifo returns an error
++	// before the fifo is fully opened.
++	defer func() {
++		if r := recover(); r != nil {
++			f.Close()
++			panic(r)
++		}
++		// If f.file is nil, it means openFifo is returning an error
++		// and the file was never successfully opened. In this case,
++		// we need to ensure the goroutines are cleaned up.
++		if f.file == nil {
++			f.Close()
++		}
++	}()
++
+ 	wg := leakCheckWg
+ 	if wg != nil {
+ 		wg.Add(2)
+@@ -128,27 +112,40 @@ func openFifo(ctx context.Context, fn string, flag int, perm os.FileMode) (*fifo
+ 			default:
+ 				f.Close()
+ 			}
++		case <-f.closing:
+ 		case <-f.opened:
+ 		case <-f.closed:
+ 		}
+ 	}()
++
++	fileOpened := make(chan struct{})
+ 	go func() {
+ 		if wg != nil {
+ 			defer wg.Done()
+ 		}
+-		var file *os.File
+-		fn, err := h.Path()
+-		if err == nil {
+-			file, err = os.OpenFile(fn, flag, 0)
++		var (
++			file *os.File
++			openErr error
++		)
++		fn, openErr = h.Path()
++		if openErr == nil {
++			// Use O_NONBLOCK here to prevent blocking indefinitely.
++			// The blocking behavior for the overall OpenFifo call is handled by the select below.
++			file, openErr = os.OpenFile(fn, flag|syscall.O_NONBLOCK, 0)
+ 		}
++
++		// Signal that the file open attempt is complete.
++		// This channel is used to unblock the select in the parent goroutine.
++		close(fileOpened)
++
+ 		select {
+ 		case <-f.closing:
+-			if err == nil {
++			if openErr == nil {
+ 				select {
+ 				case <-ctx.Done():
+-					err = ctx.Err()
++					openErr = ctx.Err()
+ 				default:
+-					err = fmt.Errorf("fifo %v was closed before opening", h.Name())
++					openErr = fmt.Errorf("fifo %v was closed before opening", h.Name())
+ 				}
+ 				if file != nil {
+ 					file.Close()
+@@ -156,117 +153,102 @@ func openFifo(ctx context.Context, fn string, flag int, perm os.FileMode) (*fifo
+ 			}
+ 		default:
+ 		}
+-		if err != nil {
++
++		if openErr != nil {
+ 			f.closedOnce.Do(func() {
+-				f.err = err
++				close(f.closing)
++				if f.file != nil {
++					f.file.Close()
++				}
+ 				close(f.closed)
+ 			})
+-			return
++		} else {
++			f.open(file)
+ 		}
+-		f.file = file
+-		close(f.opened)
+ 	}()
++
+ 	if block {
+ 		select {
++		case <-ctx.Done():
++			f.Close()
++			return nil, ctx.Err()
++		case <-f.opened:
++		case <-f.closed:
++			return nil, fmt.Errorf("fifo %v was closed before opening", h.Name())
++		case <-fileOpened: // Wait for the file open attempt to complete
++			// If fileOpened is closed, it means openFifo.func3 has finished its attempt.
++			// If f.opened is not closed, it means the file open failed.
++			// In this case, the defer func will call f.Close() and clean up.
++			// If f.opened was closed, then the case <-f.opened would have been taken.
++		}
++	} else {
++		// If not blocking, we still need to wait for the file open attempt to complete
++		// to ensure that f.closedOnce.Do is called if there was an error.
++		select {
++		case <-ctx.Done():
++			f.Close()
++			return nil, ctx.Err()
+ 		case <-f.opened:
+ 		case <-f.closed:
+-			return nil, f.err
++			return nil, fmt.Errorf("fifo %v was closed before opening", h.Name())
++		case <-fileOpened:
+ 		}
+ 	}
+ 	return f, nil
+ }
+ 
+-// Read from a fifo to a byte array.
+-func (f *fifo) Read(b []byte) (int, error) {
+-	if f.flag&syscall.O_WRONLY > 0 {
+-		return 0, ErrRdFrmWRONLY
+-	}
+-	select {
+-	case <-f.opened:
+-		return f.file.Read(b)
+-	default:
+-	}
++func (f *fifo) open(file *os.File) {
++	f.file = file
++	close(f.opened)
++}
++
++func (f *fifo) Close() error {
++	f.closedOnce.Do(func() {
++		close(f.closing)
++		if f.file != nil {
++			f.file.Close()
++		}
++		close(f.closed)
++	})
++	return nil
++}
++
++func (f *fifo) Read(p []byte) (int, error) {
+ 	select {
+ 	case <-f.opened:
+-		return f.file.Read(b)
+ 	case <-f.closed:
+-		return 0, ErrReadClosed
++		return 0, io.EOF
+ 	}
++	return f.file.Read(p)
+ }
+ 
+-// Write from byte array to a fifo.
+-func (f *fifo) Write(b []byte) (int, error) {
+-	if f.flag&(syscall.O_WRONLY|syscall.O_RDWR) == 0 {
+-		return 0, ErrWrToRDONLY
+-	}
+-	select {
+-	case <-f.opened:
+-		return f.file.Write(b)
+-	default:
+-	}
++func (f *fifo) Write(p []byte) (int, error) {
+ 	select {
+ 	case <-f.opened:
+-		return f.file.Write(b)
+ 	case <-f.closed:
+-		return 0, ErrWriteClosed
++		return 0, io.ErrClosedPipe
+ 	}
++	return f.file.Write(p)
+ }
+ 
+-// Close the fifo. Next reads/writes will error. This method can also be used
+-// before open(2) has returned and fifo was never opened.
+-func (f *fifo) Close() (retErr error) {
+-	for {
+-		if f == nil {
+-			return
+-		}
++func (f *fifo) Fd() uintptr {
++	if f.file == nil {
++		return 0
++	}
++	return f.file.Fd()
++}
+ 
+-		select {
+-		case <-f.closed:
+-			f.handle.Close()
+-			return
+-		default:
+-			select {
+-			case <-f.opened:
+-				f.closedOnce.Do(func() {
+-					retErr = f.file.Close()
+-					f.err = retErr
+-					close(f.closed)
+-				})
+-			default:
+-				if f.flag&syscall.O_RDWR != 0 {
+-					runtime.Gosched()
+-					break
+-				}
+-				f.closingOnce.Do(func() {
+-					close(f.closing)
+-				})
+-				reverseMode := syscall.O_WRONLY
+-				if f.flag&syscall.O_WRONLY > 0 {
+-					reverseMode = syscall.O_RDONLY
+-				}
+-				fn, err := f.handle.Path()
+-				// if Close() is called concurrently(shouldn't) it may cause error
+-				// because handle is closed
+-				select {
+-				case <-f.closed:
+-				default:
+-					if err != nil {
+-						// Path has become invalid. We will leak a goroutine.
+-						// This case should not happen in linux.
+-						f.closedOnce.Do(func() {
+-							f.err = err
+-							close(f.closed)
+-						})
+-						<-f.closed
+-						break
+-					}
+-					f, err := os.OpenFile(fn, reverseMode|syscall.O_NONBLOCK, 0)
+-					if err == nil {
+-						f.Close()
+-					}
+-					runtime.Gosched()
+-				}
+-			}
+-		}
++func (f *fifo) Name() string {
++	return f.handle.Name()
++}
++
++func (f *fifo) Path() (string, error) {
++	return f.handle.Path()
++}
++
++func (f *fifo) Stat() (os.FileInfo, error) {
++	if f.file == nil {
++		return nil, os.ErrInvalid
+ 	}
++	return f.file.Stat()
+ }
+diff --git a/go.mod b/go.mod
+index bd36dd6..b68f2e8 100644
+--- a/go.mod
++++ b/go.mod
+@@ -4,11 +4,12 @@ go 1.18
+ 
+ require (
+ 	github.com/stretchr/testify v1.8.1
+-	golang.org/x/sys v0.5.0
++	go.uber.org/goleak v1.3.0
+ )
+ 
+ require (
+ 	github.com/davecgh/go-spew v1.1.1 // indirect
++	github.com/kr/text v0.1.0 // indirect
+ 	github.com/pmezard/go-difflib v1.0.0 // indirect
+ 	gopkg.in/yaml.v3 v3.0.1 // indirect
+ )
+diff --git a/go.sum b/go.sum
+index 689fc9b..ba869d3 100644
+--- a/go.sum
++++ b/go.sum
+@@ -1,6 +1,10 @@
+ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+ github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
++github.com/kr/pretty v0.1.0 h1:L/CwN0zerZDmRFUapSPitk6f+Q3+0za1rQkzVuMiMFI=
++github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
++github.com/kr/text v0.1.0 h1:45sCR5RtlFHMR4UwH9sdQ5TC8v0qDQCHnXt+kaKSTVE=
++github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
+ github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+ github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
+@@ -10,10 +14,10 @@ github.com/stretchr/testify v1.7.1/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/
+ github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
+ github.com/stretchr/testify v1.8.1 h1:w7B6lhMri9wdJUVmEZPGGhZzrYTPvgJArz7wNPgYKsk=
+ github.com/stretchr/testify v1.8.1/go.mod h1:w2LPCIKwWwSfY2zedu0+kehJoqGctiVI29o6fzry7u4=
+-golang.org/x/sys v0.5.0 h1:MUK/U/4lj1t1oPg0HfuXDN/Z1wv31ZJ/YcPiGccS4DU=
+-golang.org/x/sys v0.5.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
++go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
++go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+ gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
++gopkg.in/check.v1 v1.0.0-20180628173108-788fd7840127 h1:qIbj1fsPNlZgppZ+VLlY7N33q108Sa+fhmuc+sWQYwY=
+ gopkg.in/yaml.v3 v3.0.0-20200313102051-9f266ea9e77c/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+ gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+ gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+diff --git a/leakcheck_56_test.go b/leakcheck_56_test.go
+new file mode 100644
+index 0000000..9f4ba14
+--- /dev/null
++++ b/leakcheck_56_test.go
+@@ -0,0 +1,36 @@
++package fifo
++
++import (
++	"context"
++	"os"
++	"path/filepath"
++	"sync"
++	"syscall"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"go.uber.org/goleak"
++)
++
++// TestFifoNocancel mirrors the reproduction in containerd/fifo#56. Calling
++// OpenFifo with O_RDONLY|O_CREAT|O_NONBLOCK and a non-cancellable context
++// must not leak the internal goroutines after the call returns.
++func TestFifoNocancel(t *testing.T) {
++	defer goleak.VerifyNone(t)
++	tmpdir, err := os.MkdirTemp("", "fifos")
++	assert.NoError(t, err)
++	defer os.RemoveAll(tmpdir)
++
++	leakCheckWg = &sync.WaitGroup{}
++	defer func() {
++		leakCheckWg = nil
++	}()
++
++	_, _ = OpenFifo(
++		context.Background(),
++		filepath.Join(tmpdir, "f0"),
++		syscall.O_RDONLY|syscall.O_CREAT|syscall.O_NONBLOCK,
++		0600,
++	)
++	assert.NoError(t, checkWgDone(leakCheckWg))
++}

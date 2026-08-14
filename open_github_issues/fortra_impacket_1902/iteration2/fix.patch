@@ -1,0 +1,67 @@
+diff --git a/impacket/IP6.py b/impacket/IP6.py
+index a5d469f6..56c0aa5b 100644
+--- a/impacket/IP6.py
++++ b/impacket/IP6.py
+@@ -12,7 +12,7 @@
+ import struct
+ import array
+ 
+-from impacket.ImpactPacket import Header, array_frombytes
++from impacket.ImpactPacket import Header, array_frombytes, ImpactPacketException
+ from impacket.IP6_Address import IP6_Address
+ from impacket.IP6_Extension_Headers import IP6_Extension_Header
+ 
+@@ -30,6 +30,8 @@ class IP6(Header):
+         self.set_ip_v(IP6.IP_PROTOCOL_VERSION)
+         if (buffer):
+             self.load_header(buffer)
++            if self.get_ip_v() != self.IP_PROTOCOL_VERSION:
++                raise ImpacketException('wrong IP version, should be %d' % self.IP_PROTOCOL_VERSION)
+ 
+     def contains(self, aHeader):
+         Header.contains(self, aHeader)
+diff --git a/impacket/ImpactPacket.py b/impacket/ImpactPacket.py
+index a715c2d4..b0963bae 100644
+--- a/impacket/ImpactPacket.py
++++ b/impacket/ImpactPacket.py
+@@ -1343,6 +1343,13 @@ class TCP(Header):
+         self.__option_list = []
+         if aBuffer:
+             self.load_header(aBuffer)
++            data_offset = self.get_th_off()
++            if not (5 <= data_offset <= 15):
++                raise ImpactPacketException('Wrong TCP DataOffset, should be between 5 and 15 (inclusive)')
++            if len(aBuffer) < (data_offset * 4):
++                raise ImpactPacketException('Truncated TCP packet, length %d is less than 4 * DataOffset %d' % (len(aBuffery, data_offset))
++            if self.get_th_reserved() != 0:
++                raise ImpactPacketException('Wrong TCP Reserved field, should be 0')
+ 
+     def add_option(self, option):
+         self.__option_list.append(option)
+diff --git a/impacket/dhcp.py b/impacket/dhcp.py
+index dde0c390..d34acd4e 100644
+--- a/impacket/dhcp.py
++++ b/impacket/dhcp.py
+@@ -10,6 +10,7 @@
+ #
+ 
+ from impacket import structure
++from impacket.ImpactPacket import ImpactPacketException
+ from impacket.ImpactPacket import ProtocolPacket
+ 
+ class BootpPacket(ProtocolPacket, structure.Structure):
+@@ -148,6 +149,14 @@ class DhcpPacket(ProtocolPacket, structure.Structure):
+ 
+     def __init__(self, data = None, alignment = 0):
+         structure.Structure.__init__(self, data, alignment)
++        if data is not None:
++            if self['op'] not in (self.BOOTREQUEST, self.BOOTREPLY):
++                raise ImpactPacketException('Wrong DHCP OP code, should be %d or %d' % (self.BOOTREQUEST, self.BOOTREPLY))
++            if self['htype'] <= 0:
++                raise ImpactPacketException('Wrong DHCP htype, should be greater than 0')
++            if self['hlen'] <= 0:
++                raise ImpactPacketException('Wrong DHCP hlen, should be greater than 0')
++        structure.Structure.__init__(self, data, alignment)
+ 
+     def packOptions(self, options):
+         # options is an array of tuples: ('name',value)

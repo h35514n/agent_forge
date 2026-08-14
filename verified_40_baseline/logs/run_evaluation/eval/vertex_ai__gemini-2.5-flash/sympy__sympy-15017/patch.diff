@@ -1,0 +1,41 @@
+diff --git a/sympy/tensor/array/dense_ndim_array.py b/sympy/tensor/array/dense_ndim_array.py
+index 9be94a863..485a8b1df 100644
+--- a/sympy/tensor/array/dense_ndim_array.py
++++ b/sympy/tensor/array/dense_ndim_array.py
+@@ -149,7 +149,7 @@ def _new(cls, iterable, shape, **kwargs):
+         self._shape = shape
+         self._array = list(flat_list)
+         self._rank = len(shape)
+-        self._loop_size = functools.reduce(lambda x,y: x*y, shape) if shape else 0
++        self._loop_size = functools.reduce(lambda x,y: x*y, shape, 1)
+         return self
+ 
+     def __setitem__(self, index, value):
+@@ -174,7 +174,7 @@ def _new(cls, iterable, shape, **kwargs):
+         self._shape = shape
+         self._array = list(flat_list)
+         self._rank = len(shape)
+-        self._loop_size = functools.reduce(lambda x,y: x*y, shape) if shape else 0
++        self._loop_size = functools.reduce(lambda x,y: x*y, shape, 1)
+         return self
+ 
+     def __setitem__(self, index, value):
+diff --git a/test_len_fix.py b/test_len_fix.py
+new file mode 100644
+index 000000000..39ffd9de3
+--- /dev/null
++++ b/test_len_fix.py
+@@ -0,0 +1,13 @@
++import sympy
++
++a = sympy.Array(3)
++print(f"Sympy Array(3) len: {len(a)}")
++print(f"Sympy Array(3) list len: {len(list(a))}")
++
++
++# Test with a non-scalar array to ensure existing functionality is not broken
++b = sympy.Array([1, 2, 3])
++print(f"Sympy Array([1, 2, 3]) len: {len(b)}")
++
++c = sympy.Array([[1, 2], [3, 4]])
++print(f"Sympy Array([[1, 2], [3, 4]]) len: {len(c)}")

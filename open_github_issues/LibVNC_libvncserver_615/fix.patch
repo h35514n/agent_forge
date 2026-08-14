@@ -1,0 +1,41 @@
+diff --git a/src/libvncserver/main.c b/src/libvncserver/main.c
+index 3387d166..73f5b811 100644
+--- a/src/libvncserver/main.c
++++ b/src/libvncserver/main.c
+@@ -27,6 +27,7 @@
+ 
+ #ifdef LIBVNCSERVER_HAVE_SYS_TIME_H
+ #include <sys/time.h>
++#include <sys/select.h>
+ #endif
+ 
+ #ifdef LIBVNCSERVER_HAVE_SYS_TYPES_H
+@@ -638,13 +639,23 @@ listenerRun(void *data)
+     while (screen->socketState != RFB_SOCKET_SHUTDOWN) {
+         client_fd = -1;
+         cl = NULL;
+-        FD_ZERO(&listen_fds);
+-	if(screen->listenSock != RFB_INVALID_SOCKET)
+-	  FD_SET(screen->listenSock, &listen_fds);
+-	if(screen->listen6Sock != RFB_INVALID_SOCKET)
+-	  FD_SET(screen->listen6Sock, &listen_fds);
++	if(screen->listenSock != RFB_INVALID_SOCKET) {
++	  if (screen->listenSock < FD_SETSIZE)
++	    FD_SET(screen->listenSock, &listen_fds);
++	  else
++	    rfbLog("listenerRun: listenSock (%d) >= FD_SETSIZE (%d)\n", screen->listenSock, FD_SETSIZE);
++	}
++	if(screen->listen6Sock != RFB_INVALID_SOCKET) {
++	  if (screen->listen6Sock < FD_SETSIZE)
++	    FD_SET(screen->listen6Sock, &listen_fds);
++	  else
++	    rfbLog("listenerRun: listen6Sock (%d) >= FD_SETSIZE (%d)\n", screen->listen6Sock, FD_SETSIZE);
++	}
+ #ifndef WIN32
+-	FD_SET(screen->pipe_notify_listener_thread[0], &listen_fds);
++	if (screen->pipe_notify_listener_thread[0] < FD_SETSIZE)
++	  FD_SET(screen->pipe_notify_listener_thread[0], &listen_fds);
++	else
++	  rfbLog("listenerRun: pipe_notify_listener_thread[0] (%d) >= FD_SETSIZE (%d)\n", screen->pipe_notify_listener_thread[0], FD_SETSIZE);
+ 	screen->maxFd = rfbMax(screen->maxFd, screen->pipe_notify_listener_thread[0]);
+ #endif

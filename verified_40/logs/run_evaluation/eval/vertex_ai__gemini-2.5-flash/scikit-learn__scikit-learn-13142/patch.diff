@@ -1,0 +1,44 @@
+diff --git a/sklearn/mixture/base.py b/sklearn/mixture/base.py
+index bd34333c0..e6aceff34 100644
+--- a/sklearn/mixture/base.py
++++ b/sklearn/mixture/base.py
+@@ -260,6 +260,9 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
+         # Always do a final e-step to guarantee that the labels returned by
+         # fit_predict(X) are always consistent with fit(X).predict(X)
+         # for any value of max_iter and tol (and any random_state).
++        self._set_parameters(best_params)
++        self.n_iter_ = best_n_iter
++        self.lower_bound_ = max_lower_bound
+         _, log_resp = self._e_step(X)
+ 
+         if not self.converged_:
+@@ -269,9 +272,6 @@ class BaseMixture(DensityMixin, BaseEstimator, metaclass=ABCMeta):
+                           'or check for degenerate data.'
+                           % (init + 1), ConvergenceWarning)
+ 
+-        self._set_parameters(best_params)
+-        self.n_iter_ = best_n_iter
+-        self.lower_bound_ = max_lower_bound
+ 
+         return log_resp.argmax(axis=1)
+ 
+diff --git a/test_gm.py b/test_gm.py
+new file mode 100644
+index 000000000..128a3d8fd
+--- /dev/null
++++ b/test_gm.py
+@@ -0,0 +1,14 @@
++from sklearn.mixture import GaussianMixture
++from sklearn.utils.testing import assert_array_equal
++import numpy
++X = numpy.random.randn(1000,5)
++print('no n_init')
++gm = GaussianMixture(n_components=5)
++c1 = gm.fit_predict(X)
++c2 = gm.predict(X)
++assert_array_equal(c1,c2)
++print('n_init=5')
++gm = GaussianMixture(n_components=5, n_init=5)
++c1 = gm.fit_predict(X)
++c2 = gm.predict(X)
++assert_array_equal(c1,c2)

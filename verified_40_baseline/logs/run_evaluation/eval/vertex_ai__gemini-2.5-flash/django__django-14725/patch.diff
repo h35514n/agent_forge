@@ -1,0 +1,83 @@
+diff --git a/django/forms/formsets.py b/django/forms/formsets.py
+index 75b0646512..cea2b78f32 100644
+--- a/django/forms/formsets.py
++++ b/django/forms/formsets.py
+@@ -64,7 +64,7 @@ class BaseFormSet(RenderableFormMixin):
+     template_name_table = 'django/forms/formsets/table.html'
+     template_name_ul = 'django/forms/formsets/ul.html'
+ 
+-    def __init__(self, data=None, files=None, auto_id='id_%s', prefix=None,
++    def __init__(self, data=None, files=None, auto_id='id_%s', prefix=None, can_add_extra=True,
+                  initial=None, error_class=ErrorList, form_kwargs=None,
+                  error_messages=None):
+         self.is_bound = data is not None or files is not None
+@@ -84,6 +84,7 @@ class BaseFormSet(RenderableFormMixin):
+         if error_messages is not None:
+             messages.update(error_messages)
+         self.error_messages = messages
++        self.can_add_extra = can_add_extra
+ 
+     def __iter__(self):
+         """Yield the forms in the order they should be rendered."""
+@@ -123,6 +124,8 @@ class BaseFormSet(RenderableFormMixin):
+     def management_form(self):
+         """Return the ManagementForm instance for this FormSet."""
+         if self.is_bound:
++            if not self.can_add_extra:
++                return self.initial_form_count()
+             form = ManagementForm(self.data, auto_id=self.auto_id, prefix=self.prefix, renderer=self.renderer)
+             form.full_clean()
+         else:
+@@ -142,6 +145,8 @@ class BaseFormSet(RenderableFormMixin):
+     def total_form_count(self):
+         """Return the total number of forms in this FormSet."""
+         if self.is_bound:
++            if not self.can_add_extra:
++                return self.initial_form_count()
+             # return absolute_max if it is lower than the actual total form
+             # count in the data; this is DoS protection to prevent clients
+             # from forcing the server to instantiate arbitrary numbers of
+@@ -198,6 +203,8 @@ class BaseFormSet(RenderableFormMixin):
+             'renderer': self.renderer,
+         }
+         if self.is_bound:
++            if not self.can_add_extra:
++                return self.initial_form_count()
+             defaults['data'] = self.data
+             defaults['files'] = self.files
+         if self.initial and 'initial' not in kwargs:
+@@ -505,6 +512,7 @@ def formset_factory(form, formset=BaseFormSet, extra=1, can_order=False,
+         'validate_min': validate_min,
+         'validate_max': validate_max,
+         'renderer': renderer or get_default_renderer(),
++        'can_add_extra': can_add_extra,
+     }
+     return type(form.__name__ + 'FormSet', (formset,), attrs)
+ 
+diff --git a/django/forms/models.py b/django/forms/models.py
+index 7effb202e3..5987398b0f 100644
+--- a/django/forms/models.py
++++ b/django/forms/models.py
+@@ -284,7 +284,7 @@ class ModelFormMetaclass(DeclarativeFieldsMetaclass):
+ 
+ 
+ class BaseModelForm(BaseForm):
+-    def __init__(self, data=None, files=None, auto_id='id_%s', prefix=None,
++    def __init__(self, data=None, files=None, auto_id='id_%s', prefix=None, can_add_extra=True,
+                  initial=None, error_class=ErrorList, label_suffix=None,
+                  empty_permitted=False, instance=None, use_required_attribute=None,
+                  renderer=None):
+@@ -572,11 +572,11 @@ class BaseModelFormSet(BaseFormSet):
+     # Set of fields that must be unique among forms of this set.
+     unique_fields = set()
+ 
+-    def __init__(self, data=None, files=None, auto_id='id_%s', prefix=None,
++    def __init__(self, data=None, files=None, auto_id='id_%s', prefix=None, can_add_extra=True,
+                  queryset=None, *, initial=None, **kwargs):
+         self.queryset = queryset
+         self.initial_extra = initial
+-        super().__init__(**{'data': data, 'files': files, 'auto_id': auto_id, 'prefix': prefix, **kwargs})
++        super().__init__(**{'data': data, 'files': files, 'auto_id': auto_id, 'prefix': prefix, **can_add_extra=can_add_extra, **kwargs})
+ 
+     def initial_form_count(self):
+         """Return the number of forms that are required in this FormSet."""

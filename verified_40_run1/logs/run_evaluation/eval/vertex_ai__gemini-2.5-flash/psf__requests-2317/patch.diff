@@ -1,0 +1,110 @@
+diff --git a/requests/sessions.py b/requests/sessions.py
+index d701ff2..1e2362e 100644
+--- a/requests/sessions.py
++++ b/requests/sessions.py
+@@ -425,7 +425,8 @@ class Session(SessionRedirectMixin):
+             If Tuple, ('cert', 'key') pair.
+         """
+ 
+-        method = builtin_str(method)
++        if isinstance(method, bytes):
++            method = method.decode('ascii')
+ 
+         # Create the Request.
+         req = Request(
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000..0c037ba
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,90 @@
++import sys
++import os
++import requests
++
++# Add the current directory to the path to import requests
++sys.path.insert(0, os.path.abspath('.'))
++
++from requests.sessions import Session
++from requests.models import Request
++
++def run_test():
++    s = Session()
++    # Simulate neutronclient sending a bytes method
++    method_bytes = b'GET'
++    url = 'http://example.com'
++
++    try:
++        # Call s.request() which contains the fix
++        # We need a valid URL for the request to proceed, but we don't need to actually send it.
++        # We can mock the adapter or just let it fail at the network level,
++        # as long as the method conversion happens.
++        # For simplicity, let's use a non-existent scheme to avoid actual network calls
++        # and catch the InvalidSchema exception.
++        s.request(method=method_bytes, url='invalid://example.com')
++    except requests.exceptions.InvalidSchema as e:
++        # The important part is that the method conversion happened before this exception.
++        # We need to inspect the method *after* it has been processed by s.request.
++        # This is tricky because the method is local to the s.request scope.
++        # A better way to test this is to mock the adapter.
++
++        # Let's try to get the prepared request from the adapter.
++        # This is getting complicated. Let's simplify the test.
++        # The problem is that the `method` variable is local to the `request` method.
++        # We need to inspect the `method` that is passed to `Request` constructor inside `Session.request`.
++
++        # A simpler way to test this is to temporarily modify the `Request` class
++        # or mock the `Request` constructor to inspect the `method` argument.
++        # Or, even simpler, just check the `method` attribute of the `Request` object
++        # that is created inside `Session.request`.
++
++        # Let's assume the `Request` object is created with the processed method.
++        # We can't directly access the `Request` object created inside `s.request`
++        # without modifying `requests` further or using more advanced mocking.
++
++        # Let's try to make a request to a local dummy server or mock the adapter.
++        # For now, let's just check the `method` attribute of the `Request` object
++        # that is *supposed* to be created.
++
++        # This test is flawed because it doesn't actually check the internal state
++        # of the `Session.request` method.
++
++        # Let's rethink the test. The problem is that `builtin_str(method)` is called
++        # inside `Session.request`. We need to ensure that when `method_bytes` is passed,
++        # it becomes a string 'GET' before it's used further.
++
++        # The easiest way to test this without complex mocking is to make a real request
++        # and inspect the `request.method` attribute of the `Response` object's `request` attribute.
++        # However, this requires a working HTTP server.
++
++        # Let's try to mock the adapter.
++        from unittest.mock import MagicMock
++
++        s.mount('http://', MagicMock(send=MagicMock(return_value=MagicMock(status_code=200, history=[], request=MagicMock(method='')))))
++        s.mount('https://', MagicMock(send=MagicMock(return_value=MagicMock(status_code=200, history=[], request=MagicMock(method='')))))
++
++        # Now, when s.request is called, it will use our mock adapter.
++        # We can then inspect the `request` object that was passed to the mock adapter's `send` method.
++
++        mock_adapter = s.get_adapter('http://example.com')
++        mock_send = mock_adapter.send
++
++        method_bytes = b'GET'
++        url = 'http://example.com'
++
++        s.request(method=method_bytes, url=url)
++
++        # The `send` method of the mock adapter should have been called with a PreparedRequest object.
++        # We need to get that PreparedRequest object and check its method.
++        # The call args are (request, **kwargs)
++        called_request = mock_send.call_args[0][0]
++
++        if isinstance(called_request.method, str) and called_request.method == 'GET':
++            print("Test passed: Method is correctly decoded to 'GET'")
++            sys.exit(0)
++        else:
++            print(f"Test failed: Method is {type(called_request.method)} with value '{called_request.method}'")
++            sys.exit(1)
++
++if __name__ == '__main__':
++    run_test()

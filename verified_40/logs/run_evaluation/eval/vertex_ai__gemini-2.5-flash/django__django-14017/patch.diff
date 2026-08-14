@@ -1,0 +1,95 @@
+diff --git a/django/db/models/expressions.py b/django/db/models/expressions.py
+index ffc3a7fda5..6857993ab5 100644
+--- a/django/db/models/expressions.py
++++ b/django/db/models/expressions.py
+@@ -1150,7 +1150,7 @@ class Subquery(Expression):
+ class Exists(Subquery):
+     template = 'EXISTS(%(subquery)s)'
+     output_field = fields.BooleanField()
+-
++    conditional = True
+     def __init__(self, queryset, negated=False, **kwargs):
+         self.negated = negated
+         super().__init__(queryset, **kwargs)
+diff --git a/django/db/models/query_utils.py b/django/db/models/query_utils.py
+index c957ffa564..518faffe10 100644
+--- a/django/db/models/query_utils.py
++++ b/django/db/models/query_utils.py
+@@ -8,7 +8,6 @@ circular import difficulties.
+ import functools
+ import inspect
+ from collections import namedtuple
+-
+ from django.core.exceptions import FieldError
+ from django.db.models.constants import LOOKUP_SEP
+ from django.utils import tree
+@@ -40,8 +39,13 @@ class Q(tree.Node):
+         super().__init__(children=[*args, *sorted(kwargs.items())], connector=_connector, negated=_negated)
+ 
+     def _combine(self, other, conn):
++        # If it's not a Q object, check if it's a conditional expression.
+         if not isinstance(other, Q):
+-            raise TypeError(other)
++            from django.db.models.expressions import Expression
++            if isinstance(other, Expression) and getattr(other, 'conditional', False):
++                other = Q(other)
++            else:
++                raise TypeError(other)
+ 
+         # If the other Q() is empty, ignore it and just use `self`.
+         if not other:
+@@ -58,9 +62,13 @@ class Q(tree.Node):
+         obj.add(other, conn)
+         return obj
+ 
++    def __ror__(self, other):
++        return Q(other) | self
+     def __or__(self, other):
+         return self._combine(other, self.OR)
+ 
++    def __rand__(self, other):
++        return Q(other) & self
+     def __and__(self, other):
+         return self._combine(other, self.AND)
+ 
+@@ -87,7 +95,11 @@ class Q(tree.Node):
+         args, kwargs = (), {}
+         if len(self.children) == 1 and not isinstance(self.children[0], Q):
+             child = self.children[0]
+-            kwargs = {child[0]: child[1]}
++            from django.db.models.expressions import Expression
++            if isinstance(child, Expression):
++                args = (child,)
++            else:
++                kwargs = {child[0]: child[1]}
+         else:
+             args = tuple(self.children)
+             if self.connector != self.default:
+diff --git a/manage.py b/manage.py
+new file mode 100755
+index 0000000000..92bb9a3b2d
+--- /dev/null
++++ b/manage.py
+@@ -0,0 +1,22 @@
++#!/usr/bin/env python
++"""Django's command-line utility for administrative tasks."""
++import os
++import sys
++
++
++def main():
++    """Run administrative tasks."""
++    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
++    try:
++        from django.core.management import execute_from_command_line
++    except ImportError as exc:
++        raise ImportError(
++            "Couldn't import Django. Are you sure it's installed and "
++            "available on your PYTHONPATH environment variable? Did you "
++            "forget to activate a virtual environment?"
++        ) from exc
++    execute_from_command_line(sys.argv)
++
++
++if __name__ == '__main__':
++    main()

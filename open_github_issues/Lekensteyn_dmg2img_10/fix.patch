@@ -1,0 +1,24 @@
+diff --git a/adc.c b/adc.c
+index caa3a46..a9bedaa 100644
+--- a/adc.c
++++ b/adc.c
+@@ -33,6 +33,9 @@ int adc_decompress(int in_size, unsigned char *input, int avail_size, unsigned c
+ 		case ADC_2BYTE:
+ 			chunk_size = adc_chunk_size(*inp);
+ 			offset = adc_chunk_offset(inp);
++			if (offset > outp - output) {
++				return -1; /* Invalid offset */
++			}
+ 			if (outp + chunk_size - output > avail_size) {
+ 				output_full = true;
+ 				break;
+@@ -53,6 +56,9 @@ int adc_decompress(int in_size, unsigned char *input, int avail_size, unsigned c
+ 		case ADC_3BYTE:
+ 			chunk_size = adc_chunk_size(*inp);
+ 			offset = adc_chunk_offset(inp);
++			if (offset > outp - output) {
++				return -1; /* Invalid offset */
++			}
+ 			if (outp + chunk_size - output > avail_size) {
+ 				output_full = true;
+ 				break;

@@ -1,0 +1,81 @@
+diff --git a/django/template/defaultfilters.py b/django/template/defaultfilters.py
+index 7a5b28d159..3559e31401 100644
+--- a/django/template/defaultfilters.py
++++ b/django/template/defaultfilters.py
+@@ -150,23 +150,29 @@ def floatformat(text, arg=-1):
+         elif last_char == "u":
+             use_l10n = False
+             arg = arg[:-1] or -1
+-    try:
+-        input_val = repr(text)
+-        d = Decimal(input_val)
+-    except InvalidOperation:
++    # Ensure d is a Decimal or return 
++    if isinstance(text, Decimal):
++        d = text
++    else:
+         try:
+-            d = Decimal(str(float(text)))
+-        except (ValueError, InvalidOperation, TypeError):
+-            return ""
++            d = Decimal(repr(text))
++        except InvalidOperation:
++            try:
++                d = Decimal(str(float(text)))
++            except (ValueError, InvalidOperation, TypeError):
++                return  # Return empty string if conversion fails
++
++    # Ensure p is an int or return 
+     try:
+         p = int(arg)
+     except ValueError:
+-        return input_val
++        return  # Return empty string if arg is not an int
+ 
++    # Ensure m is defined or return 
+     try:
+         m = int(d) - d
+     except (ValueError, OverflowError, InvalidOperation):
+-        return input_val
++        return  # Return empty string if this operation fails
+ 
+     if not m and p < 0:
+         return mark_safe(
+diff --git a/temp_floatformat_fix.txt b/temp_floatformat_fix.txt
+new file mode 100644
+index 0000000000..449f045c13
+--- /dev/null
++++ b/temp_floatformat_fix.txt
+@@ -0,0 +1,11 @@
++    if isinstance(text, Decimal):
++        d = text
++    else:
++        try:
++            input_val = repr(text)
++            d = Decimal(input_val)
++        except InvalidOperation:
++            try:
++                d = Decimal(str(float(text)))
++            except (ValueError, InvalidOperation, TypeError):
++                return ""
+diff --git a/test_floatformat_fix.py b/test_floatformat_fix.py
+new file mode 100644
+index 0000000000..c09ef439e9
+--- /dev/null
++++ b/test_floatformat_fix.py
+@@ -0,0 +1,15 @@
++from decimal import Decimal
++from django import setup
++from django.conf import settings
++from django.template import Template, Context
++
++TEMPLATES = [
++    {
++        'BACKEND': 'django.template.backends.django.DjangoTemplates',
++    },
++]
++settings.configure(TEMPLATES=TEMPLATES)
++setup()
++t = Template('{{ value|floatformat:20 }}')
++c = Context({'value': Decimal('42.12345678901234567890')})
++print(t.render(c))

@@ -1,0 +1,93 @@
+diff --git a/impacket/IP6.py b/impacket/IP6.py
+index a5d469f6..18c2bd0d 100644
+--- a/impacket/IP6.py
++++ b/impacket/IP6.py
+@@ -31,7 +31,18 @@ class IP6(Header):
+         if (buffer):
+             self.load_header(buffer)
+ 
+-    def contains(self, aHeader):
++
++    def load_header(self, aBuffer):
++        # Check for truncated packet
++        if len(aBuffer) < self.get_header_size():
++            raise ImpactPacketException('IPv6 header truncated')
++
++        # Call the parent's load_header to handle the rest of the buffer loading
++        super(IP6, self).load_header(aBuffer)
++
++        version = self.get_ip_v()
++        if version != IP6.IP_PROTOCOL_VERSION:
++            raise ImpactPacketException('Wrong IP version (should be 6): %d' % version)
+         Header.contains(self, aHeader)
+         if isinstance(aHeader, IP6_Extension_Header):
+             self.set_next_header(aHeader.get_header_type())
+diff --git a/impacket/ImpactPacket.py b/impacket/ImpactPacket.py
+index a715c2d4..a3077b41 100644
+--- a/impacket/ImpactPacket.py
++++ b/impacket/ImpactPacket.py
+@@ -1530,8 +1530,29 @@ class TCP(Header):
+             return array_tobytes(bytes)
+ 
+     def load_header(self, aBuffer):
++        # Check for truncated packet (minimum TCP header size is 20 bytes)
++        if len(aBuffer) < 20:
++            raise ImpactPacketException('TCP header truncated')
++
+         self.set_bytes_from_string(aBuffer[:20])
+-        opt_left = (self.get_th_off() - 5) * 4
++
++        data_offset = self.get_th_off()
++        # DataOffset validation: DataOffset >= 5 && DataOffset <= 15
++        if not (5 <= data_offset <= 15):
++            raise ImpactPacketException('Invalid TCP Data Offset: %d (should be 5 and 15)' % data_offset)
++
++        # DataOffset validation: len >= 4 * DataOffset
++        # The total TCP header length is 4 * data_offset
++        expected_header_len = data_offset * 4
++        if len(aBuffer) < expected_header_len:
++            raise ImpactPacketException('TCP packet truncated: actual length %d, expected header length %d' %(den(aBuffer), expected_header_len))
++
++        # Reserved field validation: Reserved == 0
++        reserved_field = self.get_th_reserved()
++        if reserved_field != 0:
++            raise ImpactPacketException('Invalid TCP Reserved field: %d (should be 0)' % reserved_field)
++
++        opt_left = (data_offset - 5) * 4
+         opt_bytes = array.array('B', aBuffer[20:(20 + opt_left)])
+         if len(opt_bytes) != opt_left:
+             raise ImpactPacketException("Cannot load options from truncated packet")
+@@ -1556,7 +1577,6 @@ class TCP(Header):
+             self.add_option(new_option)
+             if op_kind == TCPOption.TCPOPT_EOL:
+                 break
+-
+     #
+     # Private
+     #
+diff --git a/impacket/dhcp.py b/impacket/dhcp.py
+index dde0c390..a1b51855 100644
+--- a/impacket/dhcp.py
++++ b/impacket/dhcp.py
+@@ -32,7 +32,20 @@ class BootpPacket(ProtocolPacket, structure.Structure):
+ 
+     def __init__(self, data = None, alignment = 0):
+         structure.Structure.__init__(self, data, alignment)
+-
++        if self['op'] not in (1, 2):
++            raise ImpactPacketException('Invalid BOOTP operation code: %d' % self['op'])
++        if self['htype'] <= 0:
++            raise ImpactPacketException('Invalid BOOTP hardware type: %d' % self['htype'])
++        # hlen validation: The hlen field specifies the length of the hardware address.
++        # It should be consistent with the actual length of the chaddr field.
++        # The commonHdr defines chaddr as '_chaddr[:hlen]', so hlen is used to slice.
++        # A basic check for hlen being non-negative and not excessively large is reasonable.
++        # Given the definition, hlen is a 'b' (byte), so it's always non-negative.
++        # We can check if hlen is greater than the remaining buffer length if chaddr is not empty.
++        # However, the issue just says "hlen field" validation.
++        # For now, I'll add a check that hlen is not zero, as a hardware address length of 0 is usually invalid.
++        if self['hlen'] == 0:
++            raise ImpactPacketException('Invalid BOOTP hardward address length: %d' % self['hlen'])
+ class DhcpPacket(ProtocolPacket, structure.Structure):
+     # DHCP: https://www.ietf.org/rfc/rfc2131.txt
+     # DHCP Options: https://www.ietf.org/rfc/rfc1533.txt

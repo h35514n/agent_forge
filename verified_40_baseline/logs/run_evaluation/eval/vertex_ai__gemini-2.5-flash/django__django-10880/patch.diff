@@ -1,0 +1,61 @@
+diff --git a/django/db/models/aggregates.py b/django/db/models/aggregates.py
+index ac0b62d0bf..ea88c54b0d 100644
+--- a/django/db/models/aggregates.py
++++ b/django/db/models/aggregates.py
+@@ -68,7 +68,7 @@ class Aggregate(Func):
+         return []
+ 
+     def as_sql(self, compiler, connection, **extra_context):
+-        extra_context['distinct'] = 'DISTINCT' if self.distinct else ''
++        extra_context['distinct'] = 'DISTINCT ' if self.distinct else ''
+         if self.filter:
+             if connection.features.supports_aggregate_filter_clause:
+                 filter_sql, filter_params = self.filter.as_sql(compiler, connection)
+diff --git a/tests/aggregation/tests.py b/tests/aggregation/tests.py
+index 8cac90f020..b5dc54b20c 100644
+--- a/tests/aggregation/tests.py
++++ b/tests/aggregation/tests.py
+@@ -4,6 +4,7 @@ from decimal import Decimal
+ 
+ from django.core.exceptions import FieldError
+ from django.db import connection
++from django.db import models
+ from django.db.models import (
+     Avg, Count, DecimalField, DurationField, F, FloatField, Func, IntegerField,
+     Max, Min, Sum, Value,
+@@ -1107,3 +1108,35 @@ class AggregateTestCase(TestCase):
+             Book.objects.aggregate(is_book=True)
+         with self.assertRaisesMessage(TypeError, msg % ', '.join([str(FloatField()), 'True'])):
+             Book.objects.aggregate(FloatField(), Avg('price'), is_book=True)
++
++    def test_count_distinct_case_expression(self):
++        from django.db.models import Case, When, Value, IntegerField, F
++        # This query should not raise a syntax error
++        # It counts distinct books based on a condition
++        result = Book.objects.aggregate(
++            distinct_count=Count(
++                Case(
++                    When(rating__gt=4.0, then=F('id')),
++                    default=Value(None),
++                    output_field=IntegerField()
++                ),
++                distinct=True
++            )
++        )
++        # Assert that the query executed without error and returned a result
++        self.assertIn('distinct_count', result)
++        self.assertGreaterEqual(result['distinct_count'], 0)
++
++        # Also test with a different field for the distinct count
++        result2 = Book.objects.aggregate(
++            distinct_name_count=Count(
++                Case(
++                    When(rating__gt=4.0, then=F('name')),
++                    default=Value(None),
++                    output_field=models.CharField()
++                ),
++                distinct=True
++            )
++        )
++        self.assertIn('distinct_name_count', result2)
++        self.assertGreaterEqual(result2['distinct_name_count'], 0)

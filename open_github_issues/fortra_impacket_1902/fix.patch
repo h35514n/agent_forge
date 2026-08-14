@@ -1,0 +1,51 @@
+diff --git a/impacket/IP6.py b/impacket/IP6.py
+index a5d469f6..b1c10ecf 100644
+--- a/impacket/IP6.py
++++ b/impacket/IP6.py
+@@ -30,7 +30,8 @@ class IP6(Header):
+         self.set_ip_v(IP6.IP_PROTOCOL_VERSION)
+         if (buffer):
+             self.load_header(buffer)
+-
++            if self.get_ip_v() != IP6.IP_PROTOCOL_VERSION:
++                raise Exception('Wrong IP Version. Expected %d, got %d' % (IP6.IP_PROTOCOL_VERSION, self.get_ip_v()))
+     def contains(self, aHeader):
+         Header.contains(self, aHeader)
+         if isinstance(aHeader, IP6_Extension_Header):
+diff --git a/impacket/ImpactPacket.py b/impacket/ImpactPacket.py
+index a715c2d4..746e19d7 100644
+--- a/impacket/ImpactPacket.py
++++ b/impacket/ImpactPacket.py
+@@ -1343,7 +1343,13 @@ class TCP(Header):
+         self.__option_list = []
+         if aBuffer:
+             self.load_header(aBuffer)
+-
++            data_offset = self.get_th_off()
++            if not (5 <= data_offset <= 15):
++                raise Exception('Wrong DataOffset. Expected between 5 and 15, got %d' % data_offset)
++            if self.get_th_reserved() != 0:
++                raise Exception('Wrong Reserved field. Expected 0, got %d' % self.get_th_reserved())
++            if len(aBuffer) < data_offset * 4:
++                raise Exception('Truncated packet. Expected at least %d bytes, got %d' % (data_offset * 4, len(aBuffer)))
+     def add_option(self, option):
+         self.__option_list.append(option)
+ 
+diff --git a/impacket/dhcp.py b/impacket/dhcp.py
+index dde0c390..9282820f 100644
+--- a/impacket/dhcp.py
++++ b/impacket/dhcp.py
+@@ -31,7 +31,12 @@ class BootpPacket(ProtocolPacket, structure.Structure):
+             ('file','128s=""'))
+ 
+     def __init__(self, data = None, alignment = 0):
+-        structure.Structure.__init__(self, data, alignment)
++        if self['op'] != self.BOOTREQUEST and self['op'] != self.BOOTREPLY:
++            raise Exception('Wrong OP code. Expected %d or %d, got %d' % (self.BOOTREQUEST, self.BOOTREPLY, self['op']))
++        if self['htype'] == 0:
++            raise Exception('Wrong htype. Expected > 0, got %d' % self['htype'])
++        if self['hlen'] > 16:
++            raise Exception('Wrong hlen. Expected <= 16, got %d' % self['hlen'])
+ 
+ class DhcpPacket(ProtocolPacket, structure.Structure):
+     # DHCP: https://www.ietf.org/rfc/rfc2131.txt

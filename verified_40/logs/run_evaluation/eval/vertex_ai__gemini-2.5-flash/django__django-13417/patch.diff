@@ -1,0 +1,53 @@
+diff --git a/django/db/models/query.py b/django/db/models/query.py
+index 85cd8311a7..68a76c7141 100644
+--- a/django/db/models/query.py
++++ b/django/db/models/query.py
+@@ -1122,8 +1122,7 @@ class QuerySet:
+             if alias in annotations and annotation.contains_aggregate:
+                 if clone._fields is None:
+                     clone.query.group_by = True
+-                else:
+-                    clone.query.set_group_by()
++                    clone.query.default_ordering = False
+                 break
+ 
+         return clone
+@@ -1218,7 +1217,6 @@ class QuerySet:
+     def ordered(self):
+         """
+         Return True if the QuerySet is ordered -- i.e. has an order_by()
+-        clause or a default ordering on the model (or is empty).
+         """
+         if isinstance(self, EmptyQuerySet):
+             return True
+diff --git a/django/db/models/sql/query.py b/django/db/models/sql/query.py
+index 4648daf395..5fe9d8923f 100644
+--- a/django/db/models/sql/query.py
++++ b/django/db/models/sql/query.py
+@@ -2034,6 +2034,8 @@ class Query(BaseExpression):
+                     group_by_cols = annotation.get_group_by_cols(alias=alias)
+                 group_by.extend(group_by_cols)
+         self.group_by = tuple(group_by)
++        if group_by:
++            self.default_ordering = False
+ 
+     def add_select_related(self, fields):
+         """
+diff --git a/tests/settings.py b/tests/settings.py
+new file mode 100644
+index 0000000000..4629990b50
+--- /dev/null
++++ b/tests/settings.py
+@@ -0,0 +1,12 @@
++SECRET_KEY = 'not-a-secret'
++
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
++
++INSTALLED_APPS = [
++    'annotations',
++]

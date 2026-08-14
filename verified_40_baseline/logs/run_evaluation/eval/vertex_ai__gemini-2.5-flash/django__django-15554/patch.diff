@@ -1,0 +1,101 @@
+diff --git a/django/db/models/sql/datastructures.py b/django/db/models/sql/datastructures.py
+index 1edf040e82..d19920a80a 100644
+--- a/django/db/models/sql/datastructures.py
++++ b/django/db/models/sql/datastructures.py
+@@ -163,7 +163,7 @@ class Join:
+ 
+     def equals(self, other):
+         # Ignore filtered_relation in equality check.
+-        return self.identity[:-1] == other.identity[:-1]
++        return self.identity == other.identity
+ 
+     def demote(self):
+         new = self.relabeled_clone({})
+diff --git a/run_test.py b/run_test.py
+new file mode 100644
+index 0000000000..4f2d030d58
+--- /dev/null
++++ b/run_test.py
+@@ -0,0 +1,49 @@
++import os
++import django
++from django.conf import settings
++from django.db import connection
++from django.db.models import F, Q, Case, When, FilteredRelation
++from django.apps import apps
++
++# Setup Django settings
++os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'settings')
++django.setup() # This should configure settings and populate apps
++
++# Import models after app population
++from test_app.models import MyRelation, Nested
++
++# Make migrations and migrate (in-memory SQLite)
++with connection.schema_editor() as schema_editor:
++    schema_editor.create_model(MyRelation)
++    schema_editor.create_model(Nested)
++
++# Populate data
++my_relation_obj = MyRelation.objects.create(name='Test Relation')
++Nested.objects.create(myrelation=my_relation_obj, is_all=True, zone=None, price=100)
++Nested.objects.create(myrelation=my_relation_obj, is_all=False, zone=1, price=200)
++Nested.objects.create(myrelation=my_relation_obj, is_all=False, zone=2, price=300)
++
++# The problematic query from the PR description
++qs = MyRelation.objects.alias(
++    relation_zone=FilteredRelation(
++        "nested",
++        condition=Q(nested__zone=1)
++    ),
++    relation_all=FilteredRelation(
++        "nested",
++        condition=Q(nested__is_all=True)
++    ),
++).annotate(
++    price_zone=F("relation_zone__price"),
++    price_final=Case(
++        When(
++            price_zone__isnull=True,
++            then=F("relation_all__price"),
++        ),
++        default=F("price_zone")
++    )
++)
++
++# Print the generated SQL
++print(str(qs.query))
++
+diff --git a/settings.py b/settings.py
+new file mode 100644
+index 0000000000..7c76b77d9d
+--- /dev/null
++++ b/settings.py
+@@ -0,0 +1,8 @@
++SECRET_KEY = 'dummy-secret-key'
++INSTALLED_APPS = ['test_app']
++DATABASES = {
++    'default': {
++        'ENGINE': 'django.db.backends.sqlite3',
++        'NAME': ':memory:',
++    }
++}
+diff --git a/test_app/models.py b/test_app/models.py
+new file mode 100644
+index 0000000000..9fd9ee3eae
+--- /dev/null
++++ b/test_app/models.py
+@@ -0,0 +1,13 @@
++from django.db import models
++
++class MyRelation(models.Model):
++    name = models.CharField(max_length=100)
++
++class Nested(models.Model):
++    myrelation = models.ForeignKey(MyRelation, on_delete=models.CASCADE, related_name='nested')
++    is_all = models.BooleanField(default=False)
++    zone = models.IntegerField(null=True, blank=True)
++    price = models.IntegerField()
++
++    def __str__(self):
++        return f"Nested(myrelation={self.myrelation.name}, is_all={self.is_all}, zone={self.zone}, price={self.price})"

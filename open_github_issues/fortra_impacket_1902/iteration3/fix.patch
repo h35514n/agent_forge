@@ -1,0 +1,48 @@
+diff --git a/impacket/IP6.py b/impacket/IP6.py
+index a5d469f6..aaadb7fe 100644
+--- a/impacket/IP6.py
++++ b/impacket/IP6.py
+@@ -30,6 +30,8 @@ class IP6(Header):
+         self.set_ip_v(IP6.IP_PROTOCOL_VERSION)
+         if (buffer):
+             self.load_header(buffer)
++            if self.get_ip_v() != IP6.IP_PROTOCOL_VERSION:
++                raise ImpactPacketException('Wrong IP version')
+ 
+     def contains(self, aHeader):
+         Header.contains(self, aHeader)
+diff --git a/impacket/ImpactPacket.py b/impacket/ImpactPacket.py
+index a715c2d4..a1cbe7b0 100644
+--- a/impacket/ImpactPacket.py
++++ b/impacket/ImpactPacket.py
+@@ -1343,7 +1343,11 @@ class TCP(Header):
+         self.__option_list = []
+         if aBuffer:
+             self.load_header(aBuffer)
+-
++            data_offset = self.get_th_off()
++            if not (5 <= data_offset <= 15 and len(aBuffer) >= 4 * data_offset):
++                raise ImpactPacketException('Wrong DataOffset or truncated packet')
++            if self.get_th_reserved() != 0:
++                raise ImpactPacketException('Reserved field must be zero')
+     def add_option(self, option):
+         self.__option_list.append(option)
+ 
+diff --git a/impacket/dhcp.py b/impacket/dhcp.py
+index dde0c390..da9aed88 100644
+--- a/impacket/dhcp.py
++++ b/impacket/dhcp.py
+@@ -148,7 +148,13 @@ class DhcpPacket(ProtocolPacket, structure.Structure):
+ 
+     def __init__(self, data = None, alignment = 0):
+         structure.Structure.__init__(self, data, alignment)
+-
++        structure.Structure.__init__(self, data, alignment)
++        if self['op'] != self.BOOTREQUEST and self['op'] != self.BOOTREPLY:
++            raise ImpactPacketException('Wrong OP code')
++        if self['htype'] <= 0:
++            raise ImpactPacketException('Wrong htype')
++        if self['hlen'] <= 0:
++            raise ImpactPacketException('Wrong hlen')
+     def packOptions(self, options):
+         # options is an array of tuples: ('name',value)

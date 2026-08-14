@@ -1,0 +1,112 @@
+diff --git a/sympy/core/function.py b/sympy/core/function.py
+index 3f7374fe6..8cbfb0d78 100644
+--- a/sympy/core/function.py
++++ b/sympy/core/function.py
+@@ -79,7 +79,7 @@ def _coeff_isneg(a):
+ 
+     """
+ 
+-    if a.is_Mul:
++    if a.is_Mul or a.is_MatMul:
+         a = a.args[0]
+     return a.is_Number and a.is_negative
+ 
+diff --git a/sympy/printing/latex.py b/sympy/printing/latex.py
+index 8253b2f68..43bb3a247 100644
+--- a/sympy/printing/latex.py
++++ b/sympy/printing/latex.py
+@@ -1478,17 +1478,40 @@ def _print_Adjoint(self, expr):
+ 
+     def _print_MatAdd(self, expr):
+         terms = list(expr.args)
+-        tex = " + ".join(map(self._print, terms))
++
++        tex = ""
++        for i, term in enumerate(terms):
++            if i == 0:
++                pass
++            elif _coeff_isneg(term):
++                tex += " - "
++                term = -term
++            else:
++                tex += " + "
++            term_tex = self._print(term)
++            if self._needs_add_brackets(term):
++                tex += r"\left(%s\right)" % term_tex
++            else:
++                tex += term_tex
+         return tex
+ 
++
+     def _print_MatMul(self, expr):
+-        from sympy import Add, MatAdd, HadamardProduct
++        coeff, matrices = expr.as_coeff_matrices()
++
++        latex_matrices = [self._print(x) for x in matrices]
++
++        if coeff == S.NegativeOne:
++            return r"- %s" % r" ".join(latex_matrices)
++        elif coeff == S.One:
++            return r" ".join(latex_matrices)
++        else:
++            latex_coeff = self._print(coeff)
++            if coeff.is_Mul:
++                return r"%s %s" % (latex_coeff, r" ".join(latex_matrices))
++            else:
++                return r"%s %s" % (latex_coeff, r" ".join(latex_matrices))
+ 
+-        def parens(x):
+-            if isinstance(x, (Add, MatAdd, HadamardProduct)):
+-                return r"\left(%s\right)" % self._print(x)
+-            return self._print(x)
+-        return ' '.join(map(parens, expr.args))
+ 
+     def _print_Mod(self, expr, exp=None):
+         if exp is not None:
+diff --git a/sympy/printing/str.py b/sympy/printing/str.py
+index 0baefe0f7..e9ea2bd01 100644
+--- a/sympy/printing/str.py
++++ b/sympy/printing/str.py
+@@ -4,7 +4,7 @@
+ 
+ from __future__ import print_function, division
+ 
+-from sympy.core import S, Rational, Pow, Basic, Mul
++from sympy.core import S, Rational, Pow, Basic, Mul, Add
+ from sympy.core.mul import _keep_coeff
+ from .printer import Printer
+ from sympy.printing.precedence import precedence, PRECEDENCE
+@@ -304,8 +304,20 @@ def _print_Mul(self, expr):
+             return sign + '*'.join(a_str) + "/(%s)" % '*'.join(b_str)
+ 
+     def _print_MatMul(self, expr):
+-        return '*'.join([self.parenthesize(arg, precedence(expr))
+-            for arg in expr.args])
++        coeff, matrices = expr.as_coeff_matrices()
++        if coeff == S.NegativeOne:
++            sign = "-"
++            coeff_str = ""
++        elif coeff != S.One:
++            sign = ""
++            coeff_str = self.parenthesize(coeff, precedence(coeff)) + "*"
++        else:
++            sign = ""
++            coeff_str = ""
++
++        matrix_str = "*".join([self.parenthesize(x, precedence(expr)) for x in matrices])
++        return sign + coeff_str + matrix_str
++
+ 
+     def _print_HadamardProduct(self, expr):
+         return '.*'.join([self.parenthesize(arg, precedence(expr))
+diff --git a/test_matadd_class.py b/test_matadd_class.py
+new file mode 100644
+index 000000000..87dee509c
+--- /dev/null
++++ b/test_matadd_class.py
+@@ -0,0 +1,5 @@
++from sympy import *
++A = MatrixSymbol('A', 2, 2)
++B = MatrixSymbol('B', 2, 2)
++expr = A - A*B - B
++print(expr.__class__.__name__)

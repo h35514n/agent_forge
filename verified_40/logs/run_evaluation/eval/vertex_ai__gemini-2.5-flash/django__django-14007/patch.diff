@@ -1,0 +1,48 @@
+diff --git a/django/db/models/sql/compiler.py b/django/db/models/sql/compiler.py
+index f02199d97c..1069c2580a 100644
+--- a/django/db/models/sql/compiler.py
++++ b/django/db/models/sql/compiler.py
+@@ -1405,21 +1405,37 @@ class SQLInsertCompiler(SQLCompiler):
+             returning_fields and len(self.query.objs) != 1 and
+             not self.connection.features.can_return_rows_from_bulk_insert
+         )
+-        self.returning_fields = returning_fields
++        self.returning_fields_converters = returning_fields
+         with self.connection.cursor() as cursor:
+             for sql, params in self.as_sql():
+                 cursor.execute(sql, params)
+             if not self.returning_fields:
+                 return []
+             if self.connection.features.can_return_rows_from_bulk_insert and len(self.query.objs) > 1:
+-                return self.connection.ops.fetch_returned_insert_rows(cursor)
++                results = self.connection.ops.fetch_returned_insert_rows(cursor)
++                return self._apply_converters(results)
+             if self.connection.features.can_return_columns_from_insert:
+                 assert len(self.query.objs) == 1
+-                return [self.connection.ops.fetch_returned_insert_columns(cursor, self.returning_params)]
+-            return [(self.connection.ops.last_insert_id(
++                results = [self.connection.ops.fetch_returned_insert_columns(cursor, self.returning_params)]
++                return self._apply_converters(results)
++            pk_val = self.connection.ops.last_insert_id(
+                 cursor, self.query.get_meta().db_table, self.query.get_meta().pk.column
+-            ),)]
+-
++            )
++            pk_field = self.query.get_meta().pk
++            converted_pk_val = pk_field.from_db_value(pk_val, None, self.connection)
++            return [(converted_pk_val,)]
++
++
++    def _apply_converters(self, rows):
++        if not self.returning_fields_converters:
++            return rows
++        converted_rows = []
++        for row in rows:
++            converted_row = []
++            for value, field in zip(row, self.returning_fields_converters):
++                converted_row.append(field.from_db_value(value, None, self.connection))
++            converted_rows.append(tuple(converted_row))
++        return converted_rows
+ 
+ class SQLDeleteCompiler(SQLCompiler):
+     @cached_property

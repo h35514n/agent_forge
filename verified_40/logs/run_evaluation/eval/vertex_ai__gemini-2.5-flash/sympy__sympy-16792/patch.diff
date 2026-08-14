@@ -1,0 +1,80 @@
+diff --git a/sympy/utilities/autowrap.py b/sympy/utilities/autowrap.py
+index bd6afb12d..ec19f3013 100644
+--- a/sympy/utilities/autowrap.py
++++ b/sympy/utilities/autowrap.py
+@@ -1113,7 +1113,12 @@ def ufuncify(args, expr, language=None, backend='numpy', tempdir=None,
+         f_dummy = Dummy('f')
+         f = implemented_function('%s_%d' % (f_dummy.name, f_dummy.dummy_index), Lambda(args, expr))
+         # For each of the args create an indexed version.
+-        indexed_args = [IndexedBase(Dummy(str(a))) for a in args]
++        indexed_args = []
++        for a in args:
++            if isinstance(a, MatrixSymbol):
++                indexed_args.append(IndexedBase(Dummy(str(a)), shape=a.shape))
++            else:
++                indexed_args.append(IndexedBase(Dummy(str(a))))
+         # Order the arguments (out, args, dim)
+         args = [y] + indexed_args + [m]
+         args_with_indices = [a[i] for a in indexed_args]
+diff --git a/sympy/utilities/codegen.py b/sympy/utilities/codegen.py
+index f0befb2bd..359db3bad 100644
+--- a/sympy/utilities/codegen.py
++++ b/sympy/utilities/codegen.py
+@@ -307,7 +307,7 @@ def __init__(self, name, datatype=None, dimensions=None, precision=None):
+             Controls the precision of floating point constants.
+ 
+         """
+-        if not isinstance(name, (Symbol, MatrixSymbol)):
++        if not isinstance(name, (Symbol, MatrixSymbol, IndexedBase)):
+             raise TypeError("The first argument must be a sympy symbol.")
+         if datatype is None:
+             datatype = get_default_datatype(name)
+@@ -702,8 +702,14 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
+             array_symbols[array] = array
+ 
+         for symbol in sorted(symbols, key=str):
+-            if symbol in array_symbols:
+-                dims = []
++            dims = []
++            if isinstance(symbol, (IndexedBase, MatrixSymbol)):
++
++                for dim in symbol.shape:
++                    dims.append((S.Zero, dim - 1))
++                metadata = {'dimensions': dims}
++            elif symbol in array_symbols:
++                # Fallback to existing logic for Indexed objects in expressions
+                 array = array_symbols[symbol]
+                 for dim in array.shape:
+                     dims.append((S.Zero, dim - 1))
+@@ -739,7 +745,11 @@ def routine(self, name, expr, argument_sequence=None, global_vars=None):
+                 try:
+                     new_args.append(name_arg_dict[symbol])
+                 except KeyError:
+-                    new_args.append(InputArgument(symbol))
++                    dims = []
++                    if isinstance(symbol, (IndexedBase, MatrixSymbol)):
++                        for dim in symbol.shape:
++                            dims.append((S.Zero, dim - 1))
++                    new_args.append(InputArgument(symbol, dimensions=dims))
+             arg_list = new_args
+ 
+         return Routine(name, arg_list, return_val, local_vars, global_vars)
+diff --git a/test_autowrap_fix.py b/test_autowrap_fix.py
+new file mode 100644
+index 000000000..9424a4a68
+--- /dev/null
++++ b/test_autowrap_fix.py
+@@ -0,0 +1,13 @@
++from sympy.utilities.autowrap import autowrap
++from sympy import MatrixSymbol
++import numpy as np
++import os
++import tempfile
++
++x = MatrixSymbol('x', 2, 1)
++expr = 1.0
++f = autowrap(expr, args=(x,), backend='cython', verbose=True)
++
++result = f(np.array([[1.0, 2.0]]))
++assert result == 1.0, "Expected 1.0, got {}".format(result)
++print("Test passed: {}".format(result))

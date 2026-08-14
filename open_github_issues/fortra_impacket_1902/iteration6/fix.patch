@@ -1,0 +1,64 @@
+diff --git a/impacket/IP6.py b/impacket/IP6.py
+index a5d469f6..638fd7ac 100644
+--- a/impacket/IP6.py
++++ b/impacket/IP6.py
+@@ -30,6 +30,10 @@ class IP6(Header):
+         self.set_ip_v(IP6.IP_PROTOCOL_VERSION)
+         if (buffer):
+             self.load_header(buffer)
++    def load_header(self, aBuffer):
++        Header.load_header(self, aBuffer)
++        if self.get_ip_v() != IP6.IP_PROTOCOL_VERSION:
++            raise ImpactPacketException('Wrong IP Version. Expected %d, got %d' % (IP6.IP_PROTOCOL_VERSION, self.get_ip_v()))
+ 
+     def contains(self, aHeader):
+         Header.contains(self, aHeader)
+diff --git a/impacket/ImpactPacket.py b/impacket/ImpactPacket.py
+index a715c2d4..76177d0d 100644
+--- a/impacket/ImpactPacket.py
++++ b/impacket/ImpactPacket.py
+@@ -1531,7 +1531,15 @@ class TCP(Header):
+ 
+     def load_header(self, aBuffer):
+         self.set_bytes_from_string(aBuffer[:20])
+-        opt_left = (self.get_th_off() - 5) * 4
++        th_off = self.get_th_off()
++        if not (5 <= th_off <= 15):
++            raise ImpactPacketException('Wrong TCP DataOffset. Expected between 5 and 15, got %d' % th_off)
++        if self.get_th_reserved() != 0:
++            raise ImpactPacketException('Wrong TCP Reserved field. Expected 0, got %d' % self.get_th_reserved())
++        if len(aBuffer) < th_off * 4:
++            raise ImpactPacketException('Truncated TCP packet. Expected at least %d bytes, got %d' % (th_off * 4, len(aBuffer)))
++
++        opt_left = (th_off - 5) * 4
+         opt_bytes = array.array('B', aBuffer[20:(20 + opt_left)])
+         if len(opt_bytes) != opt_left:
+             raise ImpactPacketException("Cannot load options from truncated packet")
+diff --git a/impacket/dhcp.py b/impacket/dhcp.py
+index dde0c390..a7e6ed86 100644
+--- a/impacket/dhcp.py
++++ b/impacket/dhcp.py
+@@ -10,7 +10,7 @@
+ #
+ 
+ from impacket import structure
+-from impacket.ImpactPacket import ProtocolPacket
++from impacket.ImpactPacket import ProtocolPacket, ImpactPacketException
+ 
+ class BootpPacket(ProtocolPacket, structure.Structure):
+     commonHdr = (
+@@ -32,7 +32,13 @@ class BootpPacket(ProtocolPacket, structure.Structure):
+ 
+     def __init__(self, data = None, alignment = 0):
+         structure.Structure.__init__(self, data, alignment)
+-
++        if data is not None:
++            if self['op'] not in (1, 2):
++                raise ImpactPacketException('Wrong DHCP OP. Expected 1 or 2, got %d' % self['op'])
++            if self['htype'] <= 0:
++                raise ImpactPacketException('Wrong DHCP htype. Expected > 0, got %d' % self['htype'])
++            if self['hlen'] <= 0:
++                raise ImpactPacketException('Wrong DHCP hlen. Expected > 0, got %d' % self['hlen'])
+ class DhcpPacket(ProtocolPacket, structure.Structure):
+     # DHCP: https://www.ietf.org/rfc/rfc2131.txt
+     # DHCP Options: https://www.ietf.org/rfc/rfc1533.txt

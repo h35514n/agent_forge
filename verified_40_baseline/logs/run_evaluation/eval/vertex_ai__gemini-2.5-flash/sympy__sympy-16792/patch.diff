@@ -1,0 +1,58 @@
+diff --git a/sympy/utilities/codegen.py b/sympy/utilities/codegen.py
+index f0befb2bd..9bfb2d8f6 100644
+--- a/sympy/utilities/codegen.py
++++ b/sympy/utilities/codegen.py
+@@ -2118,13 +2118,52 @@ def codegen(name_expr, language=None, prefix=None, project="project",
+     """
+ 
+     # Initialize the code generator.
++    from sympy.matrices import MatrixSymbol
++    from sympy.printing.ccode import C89CodePrinter, C99CodePrinter
++    from sympy.tensor import IndexedBase
++
++    _dereference_symbols = set()
++    if argument_sequence:
++        for arg in argument_sequence:
++            if isinstance(arg, MatrixSymbol):
++                _dereference_symbols.add(arg)
++            elif isinstance(arg, IndexedBase):
++                _dereference_symbols.add(arg.label)
++
++    _printer_settings = {}
++    if _dereference_symbols:
++        _printer_settings["dereference"] = _dereference_symbols
++
++    _standard_lang = None
++    if language and language.upper() == "C89":
++        _standard_lang = "C89"
++    elif language and language.upper() == "C99":
++        _standard_lang = "C99"
++    elif language and language.upper() == "C":
++        _standard_lang = "C99"
++
++    _final_printer = printer
++    if _dereference_symbols and _standard_lang:
++        if _final_printer is None:
++            if _standard_lang == "C89":
++                _final_printer = C89CodePrinter(settings=_printer_settings)
++            else:
++                _final_printer = C99CodePrinter(settings=_printer_settings)
++        else:
++            # If a printer is already provided, update its settings
++            if "dereference" in _final_printer._settings:
++                _final_printer._settings["dereference"].update(_dereference_symbols)
++            else:
++                _final_printer._settings["dereference"] = _dereference_symbols
++
+     if language is None:
+         if code_gen is None:
+             raise ValueError("Need either language or code_gen")
+     else:
+         if code_gen is not None:
+             raise ValueError("You cannot specify both language and code_gen.")
+-        code_gen = get_code_generator(language, project, standard, printer)
++
++    code_gen = get_code_generator(language, project, standard=_standard_lang, printer=_final_printer)
+ 
+     if isinstance(name_expr[0], string_types):
+         # single tuple is given, turn it into a singleton list with a tuple.

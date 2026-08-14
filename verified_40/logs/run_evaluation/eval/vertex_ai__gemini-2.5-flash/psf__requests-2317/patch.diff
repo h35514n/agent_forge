@@ -1,0 +1,54 @@
+diff --git a/requests/sessions.py b/requests/sessions.py
+index d701ff2..e68ab1c 100644
+--- a/requests/sessions.py
++++ b/requests/sessions.py
+@@ -425,6 +425,8 @@ class Session(SessionRedirectMixin):
+             If Tuple, ('cert', 'key') pair.
+         """
+ 
++        if isinstance(method, bytes):
++            method = method.decode('ascii')
+         method = builtin_str(method)
+ 
+         # Create the Request.
+diff --git a/test_fix.py b/test_fix.py
+new file mode 100644
+index 0000000..b1e1fdb
+--- /dev/null
++++ b/test_fix.py
+@@ -0,0 +1,35 @@
++import requests
++from unittest.mock import patch, MagicMock
++
++def test_binary_method_decoding():
++    session = requests.Session()
++    
++    with patch.object(session, 'send') as mock_send:
++        # Mock the response from send to avoid actual network calls
++        mock_response = MagicMock()
++        mock_response.status_code = 200
++        mock_send.return_value = mock_response
++
++        # Call request with a binary method
++        session.request(method=b'GET', url='http://example.com')
++
++        # Assert that send was called
++        mock_send.assert_called_once()
++
++        # Get the Request object that was passed to send
++        prepared_request = mock_send.call_args[0][0]
++
++        # Assert that the method in the prepared request is a string and correctly decoded
++        assert isinstance(prepared_request.method, str)
++        assert prepared_request.method == 'GET'
++
++        # Test with a non-binary method to ensure it still works
++        session.request(method='POST', url='http://example.com')
++        prepared_request = mock_send.call_args[0][0] # This will be the second call
++        assert isinstance(prepared_request.method, str)
++        assert prepared_request.method == 'POST'
++
++    print("Test passed: Binary method correctly decoded to string.")
++
++if __name__ == '__main__':
++    test_binary_method_decoding()
