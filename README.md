@@ -1,14 +1,13 @@
 # AgentForge
 
-> A patch-generation and evaluation platform for the mini-swe-bench coding agent
-
 AgentForge is a patch-generation and evaluation platform for studying how tool design affects the performance of coding agents. Using mini-SWE-agent with Gemini 2.5 Flash, the project evaluates a suite of higher-level code-navigation, editing, and testing tools against a 40-instance SWE-bench Verified subset and a separate set of open GitHub issues.  The refined tool suite increased the SWE-bench resolution rate from 41.7% to 56.8%, a 36% relative improvement, while intermediate regressions demonstrated that adding more capable tools can reduce performance when their interfaces introduce new failure modes.
 
+See [report.pdf](./report.pdf) for the rendered $\LaTeX$ of this writeup.
 
 ## Evaluation: SWE-bench `verified-40`
 
 ## Experimental Setup
-The end-to-end pipeline runs `mini-extra swebench` against all 40 instances in the `verified-40` subset, writing per-instance trajectory files and a consolidated `preds.json` to subdirectories of `<project-root>/deliverables_final`.
+The end-to-end pipeline runs `mini-extra swebench` against all 40 instances in the `verified-40` subset, writing per-instance trajectory files and a consolidated `preds.json` to subdirectories of `verified_40*`.
 
 The SWE-bench harness (`swebench.harness.run_evaluation`) then evaluates each patch against the ground-truth test suite in a containerized environment using the same Docker image used for generation, producing `vertex_ai__gemini-2.5-flash.eval.json`.
 
@@ -27,7 +26,7 @@ Each instance runs in an isolated `x86_64` container (`swebench/sweb.eval.x86_64
 
 **Artifact Locations**
 
-All artifacts live in subdirectories of `./deliverables_final/<run-label>/`:
+All artifacts live in subdirectories of `<project-root>/<run-label>/`:
 
 - Generation traces (compressed):   
 `./generation/<instance-id>/<instance-id>.traj.json.gz`
@@ -645,7 +644,7 @@ Each instance runs in an isolated container (image configurable, by default `pyt
 
 **Artifact Locations**
 
-All artifacts live in subdirectories of `./deliverables_final/open_github_issues/`:
+All artifacts live in subdirectories of `./open_github_issues/`:
 
 - Generation traces (compressed): `OWNER_REPO_NUMBER/traj.json.gz`
 - Patch (if generated): `OWNER_REPO_NUMBER/fix.patch`

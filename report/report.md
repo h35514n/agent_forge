@@ -19,7 +19,7 @@ Evaluation: SWE-bench `verified-40`
 
 Experimental Setup
 ------------------
-The end-to-end pipeline runs `mini-extra swebench` against all 40 instances in the `verified-40` subset, writing per-instance trajectory files and a consolidated `preds.json` to subdirectories of `<project-root>/deliverables_final`.
+The end-to-end pipeline runs `mini-extra swebench` against all 40 instances in the `verified-40` subset, writing per-instance trajectory files and a consolidated `preds.json` to subdirectories of the project root.
 
 The SWE-bench harness (`swebench.harness.run_evaluation`) then evaluates each patch against the ground-truth test suite in a containerized environment using the same Docker image used for generation, producing `vertex_ai__gemini-2.5-flash.eval.json`.
 
@@ -38,7 +38,7 @@ Each instance runs in an isolated `x86_64` container (`swebench/sweb.eval.x86_64
 
 **Artifact Locations**
 
-All artifacts live in subdirectories of `./deliverables_final/<run-label>/`:
+All artifacts live in subdirectories of `./<project-root>/<run-label>/`:
 
 - Generation traces (compressed):   
 `./generation/<instance-id>/<instance-id>.traj.json.gz`
@@ -748,7 +748,7 @@ Each instance runs in an isolated container (image configurable, by default `pyt
 
 **Artifact Locations**
 
-All artifacts live in subdirectories of `./deliverables_final/open_github_issues/`:
+All artifacts live in subdirectories of `./<project-root>/open_github_issues/`:
 
 - Generation traces (compressed): `OWNER_REPO_NUMBER/traj.json.gz`
 - Patch (if generated): `OWNER_REPO_NUMBER/fix.patch`
